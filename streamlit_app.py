@@ -361,6 +361,9 @@ if __name__ == "__main__":
     else:
         final_prompt = prompt
 
+    st.session_state.setdefault("width_slider", 1024)
+    st.session_state.setdefault("height_slider", 1024)
+
     with st.expander("Advanced Settings"):
         seed_val = st.slider(
             "Seed",
@@ -378,7 +381,6 @@ if __name__ == "__main__":
                 "Width",
                 min_value=512,
                 max_value=MAX_IMAGE_SIZE,
-                value=1024,
                 step=32,
                 key="width_slider",
             )
@@ -387,19 +389,16 @@ if __name__ == "__main__":
                 "Height",
                 min_value=512,
                 max_value=MAX_IMAGE_SIZE,
-                value=1024,
                 step=32,
                 key="height_slider",
             )
 
-        _distilled_defaults = MODE_DEFAULTS["Distilled (4 steps)"]
         col3, col4 = st.columns(2)
         with col3:
             guidance_scale = st.slider(
                 "Guidance scale",
                 min_value=0.0,
                 max_value=10.0,
-                value=_distilled_defaults["cfg"],
                 step=0.1,
                 key="guidance_scale_slider",
             )
@@ -408,7 +407,6 @@ if __name__ == "__main__":
                 "Number of inference steps",
                 min_value=1,
                 max_value=100,
-                value=_distilled_defaults["steps"],
                 step=1,
                 key="steps_slider",
             )
