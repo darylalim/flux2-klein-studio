@@ -265,7 +265,6 @@ if __name__ == "__main__":
     auto_enhance = st.checkbox(
         "Enhance prompt",
         value=False,
-        help="Enhance the prompt using the VLM before generating",
         key="auto_enhance_checkbox",
     )
 
