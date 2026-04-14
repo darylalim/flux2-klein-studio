@@ -137,6 +137,14 @@ def _resolve_prompt(prompt, image_list, auto_enhance):
     return enhanced, True
 
 
+class _ProgressReporter:
+    def __init__(self, callback):
+        self._callback = callback
+
+    def call_in_loop(self, t, seed, prompt, latents, config, time_steps):
+        self._callback(t + 1, config.num_inference_steps)
+
+
 def _dimensions_from_images(image_list):
     """Calculate output dimensions matching the aspect ratio of the first input image."""
     w, h = image_list[0].size
@@ -178,33 +186,34 @@ def infer(
     else:
         model = MODELS[mode]()
 
+    reporter = None
     if progress_callback is not None:
+        reporter = _ProgressReporter(progress_callback)
+        model.callbacks.register(reporter)
 
-        class _ProgressReporter:
-            def call_in_loop(self, t, seed, prompt, latents, config, time_steps):
-                progress_callback(t + 1, config.num_inference_steps)
-
-        model.callbacks.register(_ProgressReporter())
-
-    if image_list:
-        image = model.generate_image(
-            seed=seed,
-            prompt=prompt,
-            num_inference_steps=num_inference_steps,
-            width=width,
-            height=height,
-            guidance=guidance_scale,
-            image_paths=image_list,
-        )
-    else:
-        image = model.generate_image(
-            seed=seed,
-            prompt=prompt,
-            num_inference_steps=num_inference_steps,
-            width=width,
-            height=height,
-            guidance=guidance_scale,
-        )
+    try:
+        if image_list:
+            image = model.generate_image(
+                seed=seed,
+                prompt=prompt,
+                num_inference_steps=num_inference_steps,
+                width=width,
+                height=height,
+                guidance=guidance_scale,
+                image_paths=image_list,
+            )
+        else:
+            image = model.generate_image(
+                seed=seed,
+                prompt=prompt,
+                num_inference_steps=num_inference_steps,
+                width=width,
+                height=height,
+                guidance=guidance_scale,
+            )
+    finally:
+        if reporter is not None:
+            model.callbacks.in_loop.remove(reporter)
 
     return image.image, seed
 
