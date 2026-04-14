@@ -12,10 +12,18 @@ class _MockGeneratedImage:
 
 
 def _make_mock_model():
-    """Create a mock mflux model that returns a dummy GeneratedImage."""
+    """Create a mock mflux model that returns a dummy GeneratedImage.
+
+    `callbacks.in_loop` is a real list and `callbacks.register` appends to it,
+    mirroring mflux's CallbackRegistry so the reporter-cleanup path in
+    `infer()` is actually exercised.
+    """
     model = MagicMock()
     model.generate_image.return_value = _MockGeneratedImage()
-    model.callbacks = MagicMock()
+    callbacks = MagicMock()
+    callbacks.in_loop = []
+    callbacks.register.side_effect = callbacks.in_loop.append
+    model.callbacks = callbacks
     return model
 
 
@@ -381,6 +389,33 @@ class TestInfer:
             call_kwargs = mock_edit_model.generate_image.call_args[1]
             assert call_kwargs["image_paths"] is images
             mock_edit_model.callbacks.register.assert_called_once()
+
+    def test_progress_reporter_removed_after_infer(self):
+        mock_model = _make_mock_model()
+        streamlit_app, _, _ = _reload_app(mock_model)
+        with patch("streamlit_app.Flux2Klein", return_value=mock_model):
+            streamlit_app.infer("a cat", progress_callback=MagicMock())
+            assert mock_model.callbacks.in_loop == []
+
+    def test_reporters_do_not_accumulate_across_runs(self):
+        mock_model = _make_mock_model()
+        streamlit_app, _, _ = _reload_app(mock_model)
+        with patch("streamlit_app.Flux2Klein", return_value=mock_model):
+            for _ in range(3):
+                streamlit_app.infer("a cat", progress_callback=MagicMock())
+            assert mock_model.callbacks.in_loop == []
+            assert mock_model.callbacks.register.call_count == 3
+
+    def test_progress_reporter_removed_on_generate_failure(self):
+        mock_model = _make_mock_model()
+        mock_model.generate_image.side_effect = RuntimeError("boom")
+        streamlit_app, _, _ = _reload_app(mock_model)
+        with patch("streamlit_app.Flux2Klein", return_value=mock_model):
+            try:
+                streamlit_app.infer("a cat", progress_callback=MagicMock())
+            except RuntimeError:
+                pass
+            assert mock_model.callbacks.in_loop == []
 
 
 class TestDimensionsFromImages:
