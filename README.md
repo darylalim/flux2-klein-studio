@@ -4,15 +4,14 @@ Generate and edit images with [FLUX.2 Klein (4B)](https://huggingface.co/black-f
 
 ## Features
 
-- Text-to-image generation and image editing with FLUX.2 Klein (4B parameters)
-- Two model variants: Distilled (4 steps, fast) and Base (50 steps, higher quality)
+- Two task modes: Generate (text-to-image) and Edit (multi-image editing)
+- Two speed/quality options: Fast (distilled model, 4 steps) and Quality (base model, 50 steps)
 - Native Apple Silicon performance via MLX — no PyTorch required
 - Multi-image upload for editing and compositing workflows
 - Auto-dimension: width/height sliders adjust to match uploaded image aspect ratio
 - Vision-aware prompt enhancement via SmolVLM-500M-Instruct (optional, loaded on first use)
-- Auto-enhance prompt: checkbox below the prompt area to enhance before generation
+- Enhance prompt: checkbox below the prompt area to enhance before generation
 - Per-step progress bar during inference
-- Pre-built example prompts with bundled images
 - Configurable seed, dimensions, guidance scale, and inference steps
 
 ## Requirements
