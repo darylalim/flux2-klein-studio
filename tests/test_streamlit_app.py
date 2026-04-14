@@ -1077,3 +1077,76 @@ class TestStreamlitApp:
             run_buttons = [b for b in at.button if b.label == "Run"]
             assert len(run_buttons) == 1
             assert run_buttons[0].disabled is True
+
+    def test_generate_mode_prompt_uses_describe_image_placeholder(self):
+        from streamlit.testing.v1 import AppTest
+
+        mock_model = _make_mock_model()
+        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+        with (
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
+            patch(
+                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
+            ),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch(
+                "mlx_vlm.load",
+                return_value=(mock_vlm_model, mock_vlm_processor),
+            ),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+            patch("streamlit.cache_resource", lambda f: f),
+        ):
+            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+            assert at.text_area(key="prompt_input").placeholder == "Describe the image\u2026"
+
+    def test_edit_mode_prompt_uses_describe_edit_placeholder(self):
+        from streamlit.testing.v1 import AppTest
+
+        mock_model = _make_mock_model()
+        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+        with (
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
+            patch(
+                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
+            ),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch(
+                "mlx_vlm.load",
+                return_value=(mock_vlm_model, mock_vlm_processor),
+            ),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+            patch("streamlit.cache_resource", lambda f: f),
+        ):
+            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+            at.button_group(key="task_pills").set_value("Edit").run(timeout=10)
+            assert at.text_area(key="prompt_input").placeholder == "Describe the edit\u2026"
+
+    def test_switching_from_edit_to_generate_hides_uploader(self):
+        from streamlit.testing.v1 import AppTest
+
+        mock_model = _make_mock_model()
+        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+        with (
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
+            patch(
+                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
+            ),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch(
+                "mlx_vlm.load",
+                return_value=(mock_vlm_model, mock_vlm_processor),
+            ),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+            patch("streamlit.cache_resource", lambda f: f),
+        ):
+            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+            at.button_group(key="task_pills").set_value("Edit").run(timeout=10)
+            assert len(at.get("file_uploader")) == 1
+            at.button_group(key="task_pills").set_value("Generate").run(timeout=10)
+            assert len(at.get("file_uploader")) == 0
