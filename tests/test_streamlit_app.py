@@ -82,28 +82,28 @@ class TestConstants:
         import streamlit_app
 
         assert streamlit_app.MODE_DEFAULTS == {
-            "Distilled (4 steps)": {"steps": 4, "cfg": 1.0},
-            "Base (50 steps)": {"steps": 50, "cfg": 4.0},
+            "Fast": {"steps": 4, "cfg": 1.0},
+            "Quality": {"steps": 50, "cfg": 4.0},
         }
 
     def test_models_maps_to_getters(self):
         import streamlit_app
 
         assert (
-            streamlit_app.MODELS["Distilled (4 steps)"]
+            streamlit_app.MODELS["Fast"]
             is streamlit_app._get_model_distilled
         )
-        assert streamlit_app.MODELS["Base (50 steps)"] is streamlit_app._get_model_base
+        assert streamlit_app.MODELS["Quality"] is streamlit_app._get_model_base
 
     def test_edit_models_maps_to_getters(self):
         import streamlit_app
 
         assert (
-            streamlit_app.EDIT_MODELS["Distilled (4 steps)"]
+            streamlit_app.EDIT_MODELS["Fast"]
             is streamlit_app._get_edit_model_distilled
         )
         assert (
-            streamlit_app.EDIT_MODELS["Base (50 steps)"]
+            streamlit_app.EDIT_MODELS["Quality"]
             is streamlit_app._get_edit_model_base
         )
 
@@ -241,7 +241,7 @@ class TestInfer:
         mock_model = _make_mock_model()
         streamlit_app, _, _ = _reload_app(mock_model)
         with patch("streamlit_app.Flux2Klein", return_value=mock_model):
-            streamlit_app.infer("a cat", mode="Base (50 steps)")
+            streamlit_app.infer("a cat", mode="Quality")
             mock_model.generate_image.assert_called_once_with(
                 seed=42,
                 prompt="a cat",
@@ -257,7 +257,7 @@ class TestInfer:
         with patch("streamlit_app.Flux2Klein", return_value=mock_model):
             streamlit_app.infer(
                 "a cat",
-                mode="Base (50 steps)",
+                mode="Quality",
                 guidance_scale=2.0,
                 num_inference_steps=10,
             )
@@ -276,7 +276,7 @@ class TestInfer:
         with patch("streamlit_app.Flux2Klein", return_value=mock_model):
             streamlit_app.infer(
                 "a cat",
-                mode="Base (50 steps)",
+                mode="Quality",
                 num_inference_steps=10,
             )
             call_kwargs = mock_model.generate_image.call_args[1]
@@ -364,7 +364,7 @@ class TestInfer:
         with patch("streamlit_app.Flux2Klein", return_value=mock_model):
             callback = MagicMock()
             streamlit_app.infer(
-                "a cat", mode="Base (50 steps)", progress_callback=callback
+                "a cat", mode="Quality", progress_callback=callback
             )
             registered = mock_model.callbacks.register.call_args[0][0]
             mock_config = MagicMock()

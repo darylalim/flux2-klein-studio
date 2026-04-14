@@ -16,8 +16,8 @@ MAX_IMAGE_SIZE = 1440
 VLM_MODEL_ID = "mlx-community/SmolVLM-500M-Instruct-bf16"
 
 MODE_DEFAULTS = {
-    "Distilled (4 steps)": {"steps": 4, "cfg": 1.0},
-    "Base (50 steps)": {"steps": 50, "cfg": 4.0},
+    "Fast": {"steps": 4, "cfg": 1.0},
+    "Quality": {"steps": 50, "cfg": 4.0},
 }
 
 
@@ -32,8 +32,8 @@ def _get_model_base():
 
 
 MODELS = {
-    "Distilled (4 steps)": _get_model_distilled,
-    "Base (50 steps)": _get_model_base,
+    "Fast": _get_model_distilled,
+    "Quality": _get_model_base,
 }
 
 
@@ -48,8 +48,8 @@ def _get_edit_model_base():
 
 
 EDIT_MODELS = {
-    "Distilled (4 steps)": _get_edit_model_distilled,
-    "Base (50 steps)": _get_edit_model_base,
+    "Fast": _get_edit_model_distilled,
+    "Quality": _get_edit_model_base,
 }
 
 
@@ -208,7 +208,7 @@ def infer(
     height=1024,
     guidance_scale=None,
     num_inference_steps=None,
-    mode="Distilled (4 steps)",
+    mode="Fast",
     image_list=None,
     progress_callback=None,
 ):
@@ -280,13 +280,13 @@ if __name__ == "__main__":
 
     mode = st.pills(
         "Mode",
-        options=["Distilled (4 steps)", "Base (50 steps)"],
-        default="Distilled (4 steps)",
+        options=["Fast", "Quality"],
+        default="Fast",
         key="mode_pills",
     )
 
     if mode is None:
-        mode = "Distilled (4 steps)"
+        mode = "Fast"
 
     if mode != st.session_state.get("prev_mode"):
         st.session_state.prev_mode = mode
