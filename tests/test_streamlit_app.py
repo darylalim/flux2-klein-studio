@@ -89,22 +89,17 @@ class TestConstants:
     def test_models_maps_to_getters(self):
         import streamlit_app
 
-        assert (
-            streamlit_app.MODELS["Fast"]
-            is streamlit_app._get_model_distilled
-        )
+        assert streamlit_app.MODELS["Fast"] is streamlit_app._get_model_distilled
         assert streamlit_app.MODELS["Quality"] is streamlit_app._get_model_base
 
     def test_edit_models_maps_to_getters(self):
         import streamlit_app
 
         assert (
-            streamlit_app.EDIT_MODELS["Fast"]
-            is streamlit_app._get_edit_model_distilled
+            streamlit_app.EDIT_MODELS["Fast"] is streamlit_app._get_edit_model_distilled
         )
         assert (
-            streamlit_app.EDIT_MODELS["Quality"]
-            is streamlit_app._get_edit_model_base
+            streamlit_app.EDIT_MODELS["Quality"] is streamlit_app._get_edit_model_base
         )
 
     def test_mode_defaults_keys_match_models(self):
@@ -363,9 +358,7 @@ class TestInfer:
         streamlit_app, _, _ = _reload_app(mock_model)
         with patch("streamlit_app.Flux2Klein", return_value=mock_model):
             callback = MagicMock()
-            streamlit_app.infer(
-                "a cat", mode="Quality", progress_callback=callback
-            )
+            streamlit_app.infer("a cat", mode="Quality", progress_callback=callback)
             registered = mock_model.callbacks.register.call_args[0][0]
             mock_config = MagicMock()
             mock_config.num_inference_steps = 50
@@ -994,9 +987,7 @@ class TestStreamlitApp:
         mock_model = _make_mock_model()
         mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
         with (
-            patch(
-                "mflux.models.flux2.variants.Flux2Klein", return_value=mock_model
-            ),
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
             patch(
                 "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
             ),
@@ -1012,3 +1003,77 @@ class TestStreamlitApp:
         ):
             at = AppTest.from_file("streamlit_app.py").run(timeout=10)
             assert at.button_group(key="task_pills").value == "Generate"
+
+    def test_generate_mode_hides_uploader(self):
+        from streamlit.testing.v1 import AppTest
+
+        mock_model = _make_mock_model()
+        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+        with (
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
+            patch(
+                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
+            ),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch(
+                "mlx_vlm.load",
+                return_value=(mock_vlm_model, mock_vlm_processor),
+            ),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+            patch("streamlit.cache_resource", lambda f: f),
+        ):
+            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+            # Default is Generate — no file_uploader should be rendered
+            assert len(at.get("file_uploader")) == 0
+
+    def test_edit_mode_shows_uploader(self):
+        from streamlit.testing.v1 import AppTest
+
+        mock_model = _make_mock_model()
+        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+        with (
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
+            patch(
+                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
+            ),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch(
+                "mlx_vlm.load",
+                return_value=(mock_vlm_model, mock_vlm_processor),
+            ),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+            patch("streamlit.cache_resource", lambda f: f),
+        ):
+            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+            at.button_group(key="task_pills").set_value("Edit").run(timeout=10)
+            assert len(at.get("file_uploader")) == 1
+
+    def test_run_disabled_in_edit_mode_without_images(self):
+        from streamlit.testing.v1 import AppTest
+
+        mock_model = _make_mock_model()
+        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+        with (
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
+            patch(
+                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
+            ),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch(
+                "mlx_vlm.load",
+                return_value=(mock_vlm_model, mock_vlm_processor),
+            ),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+            patch("streamlit.cache_resource", lambda f: f),
+        ):
+            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+            at.button_group(key="task_pills").set_value("Edit").run(timeout=10)
+            run_buttons = [b for b in at.button if b.label == "Run"]
+            assert len(run_buttons) == 1
+            assert run_buttons[0].disabled is True

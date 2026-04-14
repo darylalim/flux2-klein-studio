@@ -201,7 +201,6 @@ def infer(
     return image.image, seed
 
 
-
 if __name__ == "__main__":
     st.set_page_config(page_title="FLUX.2 Klein Pipeline", layout="centered")
 
@@ -236,23 +235,39 @@ if __name__ == "__main__":
         st.session_state.guidance_scale_slider = defaults["cfg"]
         st.session_state.steps_slider = defaults["steps"]
 
-    col_prompt, col_images = st.columns(2)
-    with col_prompt:
+    if task_mode == "Generate":
         prompt = st.text_area(
-            "Prompt", placeholder="Enter your prompt", key="prompt_input", height=160
+            "Prompt",
+            placeholder="Describe the image…",
+            key="prompt_input",
+            height=160,
+            label_visibility="collapsed",
         )
-        auto_enhance = st.checkbox(
-            "Enhance prompt",
-            value=False,
-            help="Enhance the prompt using the VLM before generating",
-            key="auto_enhance_checkbox",
-        )
-    with col_images:
-        uploaded_files = st.file_uploader(
-            "Input images (optional)",
-            type=["jpg", "jpeg", "png", "webp"],
-            accept_multiple_files=True,
-        )
+        uploaded_files = None
+    else:
+        col_prompt, col_images = st.columns(2)
+        with col_prompt:
+            prompt = st.text_area(
+                "Prompt",
+                placeholder="Describe the edit…",
+                key="prompt_input",
+                height=160,
+                label_visibility="collapsed",
+            )
+        with col_images:
+            uploaded_files = st.file_uploader(
+                "Input images",
+                type=["jpg", "jpeg", "png", "webp"],
+                accept_multiple_files=True,
+                label_visibility="collapsed",
+            )
+
+    auto_enhance = st.checkbox(
+        "Enhance prompt",
+        value=False,
+        help="Enhance the prompt using the VLM before generating",
+        key="auto_enhance_checkbox",
+    )
 
     image_list = None
     if uploaded_files:
@@ -334,7 +349,8 @@ if __name__ == "__main__":
                 key="steps_slider",
             )
 
-    if st.button("Run", type="primary"):
+    run_disabled = task_mode == "Edit" and not image_list
+    if st.button("Run", type="primary", disabled=run_disabled):
         st.session_state.pop("auto_enhanced_prompt", None)
         run_prompt, was_auto_enhanced = _resolve_prompt(
             final_prompt, image_list, auto_enhance
@@ -370,4 +386,3 @@ if __name__ == "__main__":
         st.image(st.session_state.result_image)
         if st.session_state.result_seed is not None:
             st.caption(f"Seed: {st.session_state.result_seed}")
-
