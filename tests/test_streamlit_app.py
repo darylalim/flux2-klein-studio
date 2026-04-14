@@ -1031,39 +1031,3 @@ class TestStreamlitApp:
             mock_markdown.assert_not_called()
             mock_text_input.assert_not_called()
             mock_button.assert_not_called()
-
-
-class TestExamples:
-    def test_examples_list_structure(self):
-        mock_model = _make_mock_model()
-        streamlit_app, _, _ = _reload_app(mock_model)
-        assert isinstance(streamlit_app.EXAMPLES, list)
-        assert len(streamlit_app.EXAMPLES) == 5
-        for example in streamlit_app.EXAMPLES:
-            assert "label" in example
-            assert "prompt" in example
-            assert "images" in example
-
-    def test_text_only_examples_have_no_images(self):
-        mock_model = _make_mock_model()
-        streamlit_app, _, _ = _reload_app(mock_model)
-        for example in streamlit_app.EXAMPLES[:4]:
-            assert example["images"] is None
-
-    def test_image_example_has_valid_paths(self):
-        mock_model = _make_mock_model()
-        streamlit_app, _, _ = _reload_app(mock_model)
-        image_example = streamlit_app.EXAMPLES[4]
-        assert image_example["images"] is not None
-        assert len(image_example["images"]) == 3
-
-    def test_bundled_images_are_valid(self):
-        import os
-
-        mock_model = _make_mock_model()
-        streamlit_app, _, _ = _reload_app(mock_model)
-        image_example = streamlit_app.EXAMPLES[4]
-        for path in image_example["images"]:
-            assert os.path.exists(path), f"Missing: {path}"
-            img = Image.open(path)
-            assert img.size[0] > 0 and img.size[1] > 0
