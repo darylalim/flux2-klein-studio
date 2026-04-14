@@ -122,9 +122,9 @@ def upsample_prompt(prompt, image_list=None):
         return prompt
 
 
-def _resolve_prompt(prompt, image_list, auto_enhance, already_enhanced):
+def _resolve_prompt(prompt, image_list, auto_enhance):
     """Resolve the final prompt, optionally auto-enhancing via the VLM."""
-    if auto_enhance and not already_enhanced:
+    if auto_enhance:
         return upsample_prompt(prompt, image_list=image_list), True
     return prompt, False
 
@@ -201,11 +201,6 @@ def infer(
     return image.image, seed
 
 
-def _clear_enhancement():
-    """Remove all enhancement-related session state."""
-    for key in ("enhanced_prompt", "enhanced_prompt_area", "auto_enhanced_prompt"):
-        st.session_state.pop(key, None)
-
 
 if __name__ == "__main__":
     st.set_page_config(page_title="AI Image Studio", layout="centered")
@@ -273,21 +268,9 @@ if __name__ == "__main__":
 
     if prompt != st.session_state.last_prompt:
         st.session_state.last_prompt = prompt
-        _clear_enhancement()
+        st.session_state.pop("auto_enhanced_prompt", None)
 
-    if st.button("Enhance Prompt"):
-        with st.spinner("Enhancing prompt..."):
-            enhanced = upsample_prompt(prompt, image_list=image_list)
-        st.session_state.enhanced_prompt = enhanced
-
-    if "enhanced_prompt" in st.session_state:
-        final_prompt = st.text_area(
-            "Enhanced Prompt",
-            value=st.session_state.enhanced_prompt,
-            key="enhanced_prompt_area",
-        )
-    else:
-        final_prompt = prompt
+    final_prompt = prompt
 
     st.session_state.setdefault("width_slider", 1024)
     st.session_state.setdefault("height_slider", 1024)
@@ -341,9 +324,8 @@ if __name__ == "__main__":
 
     if st.button("Run", type="primary"):
         st.session_state.pop("auto_enhanced_prompt", None)
-        already_enhanced = "enhanced_prompt" in st.session_state
         run_prompt, was_auto_enhanced = _resolve_prompt(
-            final_prompt, image_list, auto_enhance, already_enhanced
+            final_prompt, image_list, auto_enhance
         )
         if was_auto_enhanced:
             st.session_state.auto_enhanced_prompt = run_prompt

@@ -823,21 +823,12 @@ class TestResolvePrompt:
         mock_model = _make_mock_model()
         streamlit_app, _, _ = _reload_app(mock_model)
         result, was_enhanced = streamlit_app._resolve_prompt(
-            "a cat", None, auto_enhance=False, already_enhanced=False
+            "a cat", None, auto_enhance=False
         )
         assert result == "a cat"
         assert was_enhanced is False
 
-    def test_returns_original_when_already_enhanced(self):
-        mock_model = _make_mock_model()
-        streamlit_app, _, _ = _reload_app(mock_model)
-        result, was_enhanced = streamlit_app._resolve_prompt(
-            "a cat", None, auto_enhance=True, already_enhanced=True
-        )
-        assert result == "a cat"
-        assert was_enhanced is False
-
-    def test_enhances_when_auto_enhance_on_and_not_already_enhanced(self):
+    def test_enhances_when_auto_enhance_on(self):
         mock_model = _make_mock_model()
         mock_vlm = _make_mock_vlm()
         streamlit_app, _, _ = _reload_app(mock_model, mock_vlm=mock_vlm)
@@ -853,7 +844,7 @@ class TestResolvePrompt:
             mock_chat.return_value = "formatted prompt"
             mock_gen.return_value = _MockGenerationResult("enhanced prompt")
             result, was_enhanced = streamlit_app._resolve_prompt(
-                "a cat", None, auto_enhance=True, already_enhanced=False
+                "a cat", None, auto_enhance=True
             )
             assert result == "enhanced prompt"
             assert was_enhanced is True
@@ -875,20 +866,11 @@ class TestResolvePrompt:
             mock_chat.return_value = "formatted prompt"
             mock_gen.return_value = _MockGenerationResult("enhanced prompt")
             result, was_enhanced = streamlit_app._resolve_prompt(
-                "edit this", images, auto_enhance=True, already_enhanced=False
+                "edit this", images, auto_enhance=True
             )
             assert was_enhanced is True
             call_kwargs = mock_gen.call_args[1]
             assert call_kwargs["image"] is images
-
-    def test_both_flags_false(self):
-        mock_model = _make_mock_model()
-        streamlit_app, _, _ = _reload_app(mock_model)
-        result, was_enhanced = streamlit_app._resolve_prompt(
-            "a cat", None, auto_enhance=False, already_enhanced=True
-        )
-        assert result == "a cat"
-        assert was_enhanced is False
 
     def test_falls_back_on_vlm_error(self):
         mock_model = _make_mock_model()
@@ -907,36 +889,10 @@ class TestResolvePrompt:
             mock_chat.return_value = "formatted prompt"
             mock_gen.side_effect = RuntimeError("OOM")
             result, was_enhanced = streamlit_app._resolve_prompt(
-                "a cat", None, auto_enhance=True, already_enhanced=False
+                "a cat", None, auto_enhance=True
             )
             assert result == "a cat"
             assert was_enhanced is True
-
-
-class TestClearEnhancement:
-    def test_clears_all_enhancement_keys(self):
-        mock_model = _make_mock_model()
-        streamlit_app, _, _ = _reload_app(mock_model)
-        with patch("streamlit_app.st") as mock_st:
-            mock_st.session_state = {
-                "enhanced_prompt": "foo",
-                "enhanced_prompt_area": "bar",
-                "auto_enhanced_prompt": "baz",
-                "other_key": "keep",
-            }
-            streamlit_app._clear_enhancement()
-            assert "enhanced_prompt" not in mock_st.session_state
-            assert "enhanced_prompt_area" not in mock_st.session_state
-            assert "auto_enhanced_prompt" not in mock_st.session_state
-            assert mock_st.session_state["other_key"] == "keep"
-
-    def test_ignores_missing_keys(self):
-        mock_model = _make_mock_model()
-        streamlit_app, _, _ = _reload_app(mock_model)
-        with patch("streamlit_app.st") as mock_st:
-            mock_st.session_state = {"other_key": "keep"}
-            streamlit_app._clear_enhancement()
-            assert mock_st.session_state == {"other_key": "keep"}
 
 
 class TestStreamlitApp:
