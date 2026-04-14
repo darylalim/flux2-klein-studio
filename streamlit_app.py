@@ -123,10 +123,18 @@ def upsample_prompt(prompt, image_list=None):
 
 
 def _resolve_prompt(prompt, image_list, auto_enhance):
-    """Resolve the final prompt, optionally auto-enhancing via the VLM."""
-    if auto_enhance:
-        return upsample_prompt(prompt, image_list=image_list), True
-    return prompt, False
+    """Resolve the final prompt, optionally auto-enhancing via the VLM.
+
+    Returns was_enhanced=False when the VLM call fails or produces output
+    identical to the input, so the caller can avoid showing a misleading
+    "Enhanced prompt" banner.
+    """
+    if not auto_enhance:
+        return prompt, False
+    enhanced = upsample_prompt(prompt, image_list=image_list)
+    if enhanced == prompt:
+        return prompt, False
+    return enhanced, True
 
 
 def _dimensions_from_images(image_list):
@@ -273,11 +281,7 @@ if __name__ == "__main__":
         image_list = [Image.open(f) for f in uploaded_files]
 
     _image_key = (
-        tuple((f.name, f.file_id) for f in uploaded_files)
-        if uploaded_files
-        else tuple(id(img) for img in image_list)
-        if image_list
-        else ()
+        tuple((f.name, f.file_id) for f in uploaded_files) if uploaded_files else ()
     )
     if _image_key != st.session_state.get("prev_images", ()):
         st.session_state.prev_images = _image_key
@@ -351,9 +355,19 @@ if __name__ == "__main__":
     run_disabled = task_mode == "Edit" and not image_list
     if st.button("Run", type="primary", disabled=run_disabled):
         st.session_state.pop("auto_enhanced_prompt", None)
-        run_prompt, was_auto_enhanced = _resolve_prompt(
-            final_prompt, image_list, auto_enhance
-        )
+
+        cache = st.session_state.setdefault("_enhance_cache", {})
+        cache_key = (final_prompt, _image_key) if auto_enhance else None
+
+        if cache_key is not None and cache_key in cache:
+            run_prompt, was_auto_enhanced = cache[cache_key], True
+        else:
+            run_prompt, was_auto_enhanced = _resolve_prompt(
+                final_prompt, image_list, auto_enhance
+            )
+            if was_auto_enhanced and cache_key is not None:
+                cache[cache_key] = run_prompt
+
         if was_auto_enhanced:
             st.session_state.auto_enhanced_prompt = run_prompt
 

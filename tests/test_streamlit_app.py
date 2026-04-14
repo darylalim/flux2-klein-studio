@@ -885,7 +885,19 @@ class TestResolvePrompt:
                 "a cat", None, auto_enhance=True
             )
             assert result == "a cat"
-            assert was_enhanced is True
+            assert was_enhanced is False
+
+    def test_returns_not_enhanced_when_vlm_output_matches_input(self):
+        mock_model = _make_mock_model()
+        mock_vlm = _make_mock_vlm()
+        streamlit_app, _, _ = _reload_app(mock_model, mock_vlm=mock_vlm)
+        with patch("streamlit_app.upsample_prompt") as mock_upsample:
+            mock_upsample.return_value = "a cat"
+            result, was_enhanced = streamlit_app._resolve_prompt(
+                "a cat", None, auto_enhance=True
+            )
+            assert result == "a cat"
+            assert was_enhanced is False
 
 
 class TestStreamlitApp:
@@ -1099,7 +1111,10 @@ class TestStreamlitApp:
             patch("streamlit.cache_resource", lambda f: f),
         ):
             at = AppTest.from_file("streamlit_app.py").run(timeout=10)
-            assert at.text_area(key="prompt_input").placeholder == "Describe the image\u2026"
+            assert (
+                at.text_area(key="prompt_input").placeholder
+                == "Describe the image\u2026"
+            )
 
     def test_edit_mode_prompt_uses_describe_edit_placeholder(self):
         from streamlit.testing.v1 import AppTest
@@ -1123,7 +1138,10 @@ class TestStreamlitApp:
         ):
             at = AppTest.from_file("streamlit_app.py").run(timeout=10)
             at.button_group(key="task_pills").set_value("Edit").run(timeout=10)
-            assert at.text_area(key="prompt_input").placeholder == "Describe the edit\u2026"
+            assert (
+                at.text_area(key="prompt_input").placeholder
+                == "Describe the edit\u2026"
+            )
 
     def test_switching_from_edit_to_generate_hides_uploader(self):
         from streamlit.testing.v1 import AppTest
