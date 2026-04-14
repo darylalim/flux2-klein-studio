@@ -203,10 +203,9 @@ def infer(
 
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="AI Image Studio", layout="centered")
+    st.set_page_config(page_title="FLUX.2 Klein Pipeline", layout="centered")
 
-    st.title("AI Image Studio")
-    st.caption("Powered by [FLUX.2 Klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B)")
+    st.title("FLUX.2 Klein Pipeline")
 
     mode = st.pills(
         "Mode",
@@ -230,9 +229,9 @@ if __name__ == "__main__":
             "Prompt", placeholder="Enter your prompt", key="prompt_input", height=160
         )
         auto_enhance = st.checkbox(
-            "Auto-enhance prompt",
+            "Enhance prompt",
             value=False,
-            help="Automatically enhance the prompt using the VLM before generating",
+            help="Enhance the prompt using the VLM before generating",
             key="auto_enhance_checkbox",
         )
     with col_images:
@@ -275,7 +274,7 @@ if __name__ == "__main__":
     st.session_state.setdefault("width_slider", 1024)
     st.session_state.setdefault("height_slider", 1024)
 
-    with st.expander("Advanced Settings"):
+    with st.expander("Settings"):
         seed_val = st.slider(
             "Seed",
             min_value=0,
