@@ -987,3 +987,28 @@ class TestStreamlitApp:
             mock_markdown.assert_not_called()
             mock_text_input.assert_not_called()
             mock_button.assert_not_called()
+
+    def test_task_mode_defaults_to_generate(self):
+        from streamlit.testing.v1 import AppTest
+
+        mock_model = _make_mock_model()
+        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+        with (
+            patch(
+                "mflux.models.flux2.variants.Flux2Klein", return_value=mock_model
+            ),
+            patch(
+                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
+            ),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch(
+                "mlx_vlm.load",
+                return_value=(mock_vlm_model, mock_vlm_processor),
+            ),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+            patch("streamlit.cache_resource", lambda f: f),
+        ):
+            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+            assert at.button_group(key="task_pills").value == "Generate"

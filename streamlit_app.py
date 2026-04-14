@@ -207,13 +207,26 @@ if __name__ == "__main__":
 
     st.title("FLUX.2 Klein Pipeline")
 
-    mode = st.pills(
-        "Mode",
-        options=["Fast", "Quality"],
-        default="Fast",
-        key="mode_pills",
-    )
+    col_task, col_quality = st.columns(2)
+    with col_task:
+        task_mode = st.pills(
+            "Task",
+            options=["Generate", "Edit"],
+            default="Generate",
+            key="task_pills",
+            label_visibility="collapsed",
+        )
+    with col_quality:
+        mode = st.pills(
+            "Quality",
+            options=["Fast", "Quality"],
+            default="Fast",
+            key="mode_pills",
+            label_visibility="collapsed",
+        )
 
+    if task_mode is None:
+        task_mode = "Generate"
     if mode is None:
         mode = "Fast"
 
