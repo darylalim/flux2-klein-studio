@@ -1,18 +1,19 @@
 # FLUX.2 Klein Pipeline
 
-Generate and edit images with [FLUX.2 Klein (4B)](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) from Black Forest Labs. Runs natively on Apple Silicon via [mflux](https://github.com/filipstrand/mflux). Vision-aware prompt enhancement via [SmolVLM-500M-Instruct](https://huggingface.co/mlx-community/SmolVLM-500M-Instruct-bf16) powered by [mlx-vlm](https://github.com/Blaizzy/mlx-vlm).
+Generate and edit images with the Black Forest Labs [FLUX.2 Klein 4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) model on Apple Silicon with MLX.
 
 ## Features
 
-- Two task modes: Generate (text-to-image) and Edit (multi-image editing)
-- Two speed/quality options: Fast (distilled model, 4 steps) and Quality (base model, 50 steps)
+- Unified generation and editing — text-to-image by default; uploading one or more images switches to editing automatically
+- Two speed/quality modes: Distilled (4 steps) and Base (50 steps)
 - Native Apple Silicon performance via MLX — no PyTorch required
+- Two-column studio layout: controls on the left, generated image on the right
 - Multi-image upload for editing and compositing workflows
-- Auto-dimension: width/height sliders adjust to match uploaded image aspect ratio
-- Vision-aware prompt enhancement via SmolVLM-500M-Instruct (optional, loaded on first use)
-- Enhance prompt: checkbox below the prompt area to enhance before generation
+- Auto-dimension: width/height sliders adjust to match the first input image's aspect ratio
+- Optional vision-aware prompt upsampling via SmolVLM-500M-Instruct — a toggle in Advanced Settings; the VLM can see uploaded images when enhancing edit prompts (loaded on first use)
+- Clickable examples — text-to-image prompts plus an editing example with bundled input images
 - Per-step progress bar during inference
-- Configurable seed, dimensions, guidance scale, and inference steps
+- Configurable seed, dimensions, guidance scale, and inference steps in Advanced Settings
 
 ## Requirements
 
