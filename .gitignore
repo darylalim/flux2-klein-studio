@@ -5,9 +5,8 @@
 # Python
 __pycache__/
 
-# Tools
+# Caches & tooling
 .DS_Store
 .pytest_cache/
 .ruff_cache/
 .superpowers/
-docs/
