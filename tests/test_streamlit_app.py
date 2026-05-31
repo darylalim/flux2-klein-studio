@@ -1,4 +1,6 @@
+import contextlib
 import importlib
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from PIL import Image
@@ -79,7 +81,7 @@ class TestConstants:
     def test_max_image_size(self):
         import streamlit_app
 
-        assert streamlit_app.MAX_IMAGE_SIZE == 1440
+        assert streamlit_app.MAX_IMAGE_SIZE == 1024
 
     def test_vlm_model_id(self):
         import streamlit_app
@@ -451,12 +453,12 @@ class TestDimensionsFromImages:
         assert w % 32 == 0
         assert h % 32 == 0
 
-    def test_clamps_min_to_512(self):
+    def test_clamps_min_to_256(self):
         mock_model = _make_mock_model()
         streamlit_app, _, _ = _reload_app(mock_model)
         images = [Image.new("RGB", (3000, 500))]
         _, h = streamlit_app._dimensions_from_images(images)
-        assert h >= 512
+        assert h == 256
 
     def test_zero_height_returns_default(self):
         mock_model = _make_mock_model()
@@ -512,14 +514,14 @@ class TestDimensionsFromImages:
         images = [Image.new("RGB", (5000, 500))]
         w, h = streamlit_app._dimensions_from_images(images)
         assert w == 1024
-        assert h == 512
+        assert h == 256
 
     def test_extreme_tall_clamps_width(self):
         mock_model = _make_mock_model()
         streamlit_app, _, _ = _reload_app(mock_model)
         images = [Image.new("RGB", (500, 5000))]
         w, h = streamlit_app._dimensions_from_images(images)
-        assert w == 512
+        assert w == 256
         assert h == 1024
 
 
@@ -1028,7 +1030,7 @@ class TestStreamlitApp:
             mock_text_input.assert_not_called()
             mock_button.assert_not_called()
 
-    def test_task_mode_defaults_to_generate(self):
+    def test_mode_defaults_to_distilled(self):
         from streamlit.testing.v1 import AppTest
 
         mock_model = _make_mock_model()
@@ -1049,9 +1051,9 @@ class TestStreamlitApp:
             patch("streamlit.cache_resource", lambda f: f),
         ):
             at = AppTest.from_file("streamlit_app.py").run(timeout=10)
-            assert at.button_group(key="task_pills").value == "Generate"
+            assert at.radio(key="mode_radio").value == "Distilled (4 steps)"
 
-    def test_generate_mode_hides_uploader(self):
+    def test_uploader_always_present(self):
         from streamlit.testing.v1 import AppTest
 
         mock_model = _make_mock_model()
@@ -1072,34 +1074,10 @@ class TestStreamlitApp:
             patch("streamlit.cache_resource", lambda f: f),
         ):
             at = AppTest.from_file("streamlit_app.py").run(timeout=10)
-            # Default is Generate — no file_uploader should be rendered
-            assert len(at.get("file_uploader")) == 0
-
-    def test_edit_mode_shows_uploader(self):
-        from streamlit.testing.v1 import AppTest
-
-        mock_model = _make_mock_model()
-        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
-            patch(
-                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
-            ),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch(
-                "mlx_vlm.load",
-                return_value=(mock_vlm_model, mock_vlm_processor),
-            ),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-            patch("streamlit.cache_resource", lambda f: f),
-        ):
-            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
-            at.button_group(key="task_pills").set_value("Edit").run(timeout=10)
+            # Unified layout: the optional uploader is always rendered
             assert len(at.get("file_uploader")) == 1
 
-    def test_run_disabled_in_edit_mode_without_images(self):
+    def test_run_button_present_and_enabled(self):
         from streamlit.testing.v1 import AppTest
 
         mock_model = _make_mock_model()
@@ -1120,12 +1098,12 @@ class TestStreamlitApp:
             patch("streamlit.cache_resource", lambda f: f),
         ):
             at = AppTest.from_file("streamlit_app.py").run(timeout=10)
-            at.button_group(key="task_pills").set_value("Edit").run(timeout=10)
             run_buttons = [b for b in at.button if b.label == "Run"]
             assert len(run_buttons) == 1
-            assert run_buttons[0].disabled is True
+            # Editing is implicit now, so Run is never disabled
+            assert run_buttons[0].disabled is False
 
-    def test_generate_mode_prompt_uses_describe_image_placeholder(self):
+    def test_prompt_uses_enter_prompt_placeholder(self):
         from streamlit.testing.v1 import AppTest
 
         mock_model = _make_mock_model()
@@ -1146,21 +1124,334 @@ class TestStreamlitApp:
             patch("streamlit.cache_resource", lambda f: f),
         ):
             at = AppTest.from_file("streamlit_app.py").run(timeout=10)
-            assert (
-                at.text_area(key="prompt_input").placeholder
-                == "Describe the image\u2026"
+            assert at.text_input(key="prompt_input").placeholder == "Enter your prompt"
+
+    def test_mode_change_updates_steps_and_guidance(self):
+        from streamlit.testing.v1 import AppTest
+
+        mock_model = _make_mock_model()
+        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+        with (
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
+            patch(
+                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
+            ),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch(
+                "mlx_vlm.load",
+                return_value=(mock_vlm_model, mock_vlm_processor),
+            ),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+            patch("streamlit.cache_resource", lambda f: f),
+        ):
+            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+            assert at.slider(key="steps_slider").value == 4
+            assert at.slider(key="guidance_scale_slider").value == 1.0
+            at.radio(key="mode_radio").set_value("Base (50 steps)").run(timeout=10)
+            assert at.slider(key="steps_slider").value == 50
+            assert at.slider(key="guidance_scale_slider").value == 4.0
+
+    def test_example_buttons_render(self):
+        from streamlit.testing.v1 import AppTest
+
+        mock_model = _make_mock_model()
+        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+        with (
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
+            patch(
+                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
+            ),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch(
+                "mlx_vlm.load",
+                return_value=(mock_vlm_model, mock_vlm_processor),
+            ),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+            patch("streamlit.cache_resource", lambda f: f),
+        ):
+            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+            # Run button + 4 example buttons
+            assert len(at.button) >= 5
+            assert at.button(key="example_2").label  # capybara text-to-image example
+
+    def test_clicking_example_fills_prompt(self):
+        from streamlit.testing.v1 import AppTest
+
+        mock_model = _make_mock_model()
+        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+        with (
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
+            patch(
+                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
+            ),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch(
+                "mlx_vlm.load",
+                return_value=(mock_vlm_model, mock_vlm_processor),
+            ),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+            patch("streamlit.cache_resource", lambda f: f),
+        ):
+            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+            example = at.button(key="example_2")  # capybara prompt
+            example.click().run(timeout=10)
+            # Button labels are truncated; clicking sets the full prompt
+            value = at.text_input(key="prompt_input").value or ""
+            assert "capybara" in value
+            assert value.endswith("close up photo")
+
+    def test_edit_example_loads_prompt_and_images(self):
+        from streamlit.testing.v1 import AppTest
+
+        mock_model = _make_mock_model()
+        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+        with (
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
+            patch(
+                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
+            ),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch(
+                "mlx_vlm.load",
+                return_value=(mock_vlm_model, mock_vlm_processor),
+            ),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+            patch("streamlit.cache_resource", lambda f: f),
+        ):
+            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+            edit_example = at.button(key="edit_example_0")
+            edit_example.click().run(timeout=10)
+            assert "petting" in (at.text_input(key="prompt_input").value or "")
+            assert len(at.session_state["example_images"]) == 3
+
+
+class _FakeSessionState(dict):
+    # Minimal st.session_state stand-in: attribute access + item access + pop.
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __setattr__(self, name, value):
+        self[name] = value
+
+
+@contextlib.contextmanager
+def _app_test():
+    # Build an AppTest for streamlit_app.py with the heavy deps mocked out.
+    mock_model = _make_mock_model()
+    mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+    with (
+        patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
+        patch("mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model),
+        patch("mflux.models.common.config.ModelConfig"),
+        patch("mlx_vlm.load", return_value=(mock_vlm_model, mock_vlm_processor)),
+        patch("mlx_vlm.generate"),
+        patch("mlx_vlm.prompt_utils.apply_chat_template"),
+        patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+        patch("streamlit.cache_resource", lambda f: f),
+    ):
+        from streamlit.testing.v1 import AppTest
+
+        yield AppTest.from_file("streamlit_app.py")
+
+
+class TestExamplesAndLabels:
+    def test_mode_labels_and_inverse_mapping(self):
+        import streamlit_app
+
+        assert streamlit_app.MODE_LABELS == {
+            "Fast": "Distilled (4 steps)",
+            "Quality": "Base (50 steps)",
+        }
+        assert streamlit_app.LABEL_TO_MODE == {
+            "Distilled (4 steps)": "Fast",
+            "Base (50 steps)": "Quality",
+        }
+        # A label exists for every mode and the mapping round-trips.
+        assert set(streamlit_app.MODE_LABELS) == set(streamlit_app.MODE_DEFAULTS)
+        assert all(
+            streamlit_app.MODE_LABELS[streamlit_app.LABEL_TO_MODE[label]] == label
+            for label in streamlit_app.LABEL_TO_MODE
+        )
+
+    def test_example_prompts_shape(self):
+        import streamlit_app
+
+        assert len(streamlit_app.EXAMPLE_PROMPTS) == 4
+        assert all(
+            isinstance(p, str) and p.strip() for p in streamlit_app.EXAMPLE_PROMPTS
+        )
+        assert any("capybara" in p for p in streamlit_app.EXAMPLE_PROMPTS)
+
+    def test_edit_examples_shape_and_files_exist(self):
+        import streamlit_app
+
+        assert streamlit_app._EXAMPLES_DIR.is_dir()
+        assert streamlit_app._EXAMPLES_DIR.name == "examples"
+        assert len(streamlit_app.EDIT_EXAMPLES) == 1
+        for prompt, images in streamlit_app.EDIT_EXAMPLES:
+            assert isinstance(prompt, str) and prompt.strip()
+            assert isinstance(images, list) and len(images) == 3
+            for image_path in images:
+                assert Path(image_path).is_file()
+
+    def test_truncate(self):
+        import streamlit_app
+
+        truncate = streamlit_app._truncate
+        assert truncate("hi") == "hi"
+        assert truncate("x" * 70) == "x" * 70
+        long_label = truncate("y" * 71)
+        assert long_label.endswith("…")
+        assert len(long_label) == 71
+        # The slice is rstrip'd before the ellipsis is appended.
+        assert truncate("a" * 68 + "  zzzz") == "a" * 68 + "…"
+        assert truncate("abcdef", length=3) == "abc…"
+
+
+class TestExampleCallbacks:
+    def test_set_example_prompt_clears_example_images(self):
+        import streamlit_app
+
+        fake = _FakeSessionState(example_images=["x"])
+        with patch.object(streamlit_app, "st") as mock_st:
+            mock_st.session_state = fake
+            streamlit_app._set_example_prompt("a cat")
+        assert fake["prompt_input"] == "a cat"
+        assert "example_images" not in fake
+
+    def test_load_edit_example_sets_prompt_and_copies_images(self):
+        import streamlit_app
+
+        src = ["p1", "p2"]
+        fake = _FakeSessionState()
+        with patch.object(streamlit_app, "st") as mock_st:
+            mock_st.session_state = fake
+            streamlit_app._load_edit_example("edit me", src)
+        assert fake["prompt_input"] == "edit me"
+        assert fake["example_images"] == ["p1", "p2"]
+        # Stored as a copy so mutating session_state cannot corrupt EDIT_EXAMPLES.
+        assert fake["example_images"] is not src
+
+    def test_clear_example_images(self):
+        import streamlit_app
+
+        fake = _FakeSessionState(example_images=["x"], prompt_input="keep")
+        with patch.object(streamlit_app, "st") as mock_st:
+            mock_st.session_state = fake
+            streamlit_app._clear_example_images()
+            assert "example_images" not in fake
+            assert fake["prompt_input"] == "keep"
+            streamlit_app._clear_example_images()  # idempotent, must not raise
+
+
+class TestMoreCoreLogic:
+    def test_randomized_seed_forwarded_to_model(self):
+        mock_model = _make_mock_model()
+        streamlit_app, _, _ = _reload_app(mock_model)
+        with (
+            patch("streamlit_app.Flux2Klein", return_value=mock_model),
+            patch("streamlit_app.random.randint", return_value=777),
+        ):
+            _, seed = streamlit_app.infer("a cat", seed=42, randomize_seed=True)
+            assert seed == 777
+            assert mock_model.generate_image.call_args[1]["seed"] == 777
+
+    def test_aspect_landing_on_min_floor(self):
+        mock_model = _make_mock_model()
+        streamlit_app, _, _ = _reload_app(mock_model)
+        # aspect 4 -> short side rounds to exactly 256 (the new floor)
+        assert streamlit_app._dimensions_from_images(
+            [Image.new("RGB", (2048, 512))]
+        ) == (
+            1024,
+            256,
+        )
+        assert streamlit_app._dimensions_from_images(
+            [Image.new("RGB", (512, 2048))]
+        ) == (
+            256,
+            1024,
+        )
+
+    def test_long_side_equals_max_image_size(self):
+        mock_model = _make_mock_model()
+        streamlit_app, _, _ = _reload_app(mock_model)
+        for size in [(1600, 800), (800, 1600), (1200, 900), (1920, 1080)]:
+            w, h = streamlit_app._dimensions_from_images([Image.new("RGB", size)])
+            assert max(w, h) == streamlit_app.MAX_IMAGE_SIZE
+
+
+class TestUIWidgets:
+    def test_dimension_sliders_range(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            for key in ("width_slider", "height_slider"):
+                slider = at.slider(key=key)
+                assert slider.min == 256
+                assert slider.max == 1024
+                assert slider.step == 32
+
+    def test_guidance_slider_uses_g_format(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            assert at.slider(key="guidance_scale_slider").proto.format == "%g"
+
+    def test_seed_is_number_input(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            assert len(at.number_input) == 1
+            seed = at.number_input[0]
+            assert seed.label == "Seed"
+            assert seed.min == 0
+            assert seed.max == 2_147_483_647
+            assert seed.value == 0
+
+    def test_two_examples_sections_render(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            assert sum(1 for m in at.markdown if m.value == "**Examples**") == 2
+            assert at.button(key="edit_example_0").label
+
+    def test_t2i_example_clears_loaded_edit_images(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            at.button(key="edit_example_0").click().run(timeout=10)
+            assert "example_images" in at.session_state
+            at.button(key="example_2").click().run(timeout=10)
+            assert "example_images" not in at.session_state
+            assert "capybara" in (at.text_input(key="prompt_input").value or "")
+
+    def test_clear_example_images_button(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            at.button(key="edit_example_0").click().run(timeout=10)
+            assert any(b.label == "Clear example images" for b in at.button)
+            next(b for b in at.button if b.label == "Clear example images").click().run(
+                timeout=10
             )
+            assert "example_images" not in at.session_state
+            assert not any(b.label == "Clear example images" for b in at.button)
 
-    def test_edit_mode_prompt_uses_describe_edit_placeholder(self):
+    def test_example_run_routes_through_edit_model(self):
         from streamlit.testing.v1 import AppTest
 
-        mock_model = _make_mock_model()
+        mock_txt2img = _make_mock_model()
+        mock_edit = _make_mock_model()
         mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
         with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
-            patch(
-                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
-            ),
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_txt2img),
+            patch("mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_edit),
             patch("mflux.models.common.config.ModelConfig"),
             patch(
                 "mlx_vlm.load",
@@ -1172,34 +1463,8 @@ class TestStreamlitApp:
             patch("streamlit.cache_resource", lambda f: f),
         ):
             at = AppTest.from_file("streamlit_app.py").run(timeout=10)
-            at.button_group(key="task_pills").set_value("Edit").run(timeout=10)
-            assert (
-                at.text_area(key="prompt_input").placeholder
-                == "Describe the edit\u2026"
-            )
-
-    def test_switching_from_edit_to_generate_hides_uploader(self):
-        from streamlit.testing.v1 import AppTest
-
-        mock_model = _make_mock_model()
-        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
-            patch(
-                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
-            ),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch(
-                "mlx_vlm.load",
-                return_value=(mock_vlm_model, mock_vlm_processor),
-            ),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-            patch("streamlit.cache_resource", lambda f: f),
-        ):
-            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
-            at.button_group(key="task_pills").set_value("Edit").run(timeout=10)
-            assert len(at.get("file_uploader")) == 1
-            at.button_group(key="task_pills").set_value("Generate").run(timeout=10)
-            assert len(at.get("file_uploader")) == 0
+            # Load the editing example, then Run — loaded images must route to edit.
+            at.button(key="edit_example_0").click().run(timeout=10)
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            assert mock_edit.generate_image.called
+            assert not mock_txt2img.generate_image.called

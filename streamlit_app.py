@@ -1,4 +1,5 @@
 import random
+from pathlib import Path
 
 import streamlit as st
 from mflux.models.common.config import ModelConfig
@@ -10,7 +11,7 @@ from mlx_vlm.utils import load_config
 from PIL import Image
 
 MAX_SEED = 2_147_483_647
-MAX_IMAGE_SIZE = 1440
+MAX_IMAGE_SIZE = 1024
 
 VLM_MODEL_ID = "mlx-community/SmolVLM-500M-Instruct-bf16"
 
@@ -18,6 +19,35 @@ MODE_DEFAULTS = {
     "Fast": {"steps": 4, "cfg": 1.0},
     "Quality": {"steps": 50, "cfg": 4.0},
 }
+
+# UI display labels for the speed/quality modes (match the FLUX.2 [klein] Gradio
+# space). Internal keys stay "Fast"/"Quality"; only the visible text changes.
+MODE_LABELS = {
+    "Fast": "Distilled (4 steps)",
+    "Quality": "Base (50 steps)",
+}
+LABEL_TO_MODE = {label: mode for mode, label in MODE_LABELS.items()}
+
+EXAMPLE_PROMPTS = [
+    "Create a vase on a table in living room, the color of the vase is a gradient of color, starting with #02eb3c color and finishing with #edfa3c. The flowers inside the vase have the color #ff0088",
+    "Photorealistic infographic showing the complete Berlin TV Tower (Fernsehturm) from ground base to antenna tip, full vertical view with entire structure visible including concrete shaft, metallic sphere, and antenna spire. Slight upward perspective angle looking up toward the iconic sphere, perfectly centered on clean white background. Left side labels with thin horizontal connector lines: the text '368m' in extra large bold dark grey numerals (#2D3748) positioned at exactly the antenna tip with 'TOTAL HEIGHT' in small caps below. The text '207m' in extra large bold with 'TELECAFÉ' in small caps below, with connector line touching the sphere precisely at the window level. Right side label with horizontal connector line touching the sphere's equator: the text '32m' in extra large bold dark grey numerals with 'SPHERE DIAMETER' in small caps below. Bottom section arranged in three balanced columns: Left - Large text '986' in extra bold dark grey with 'STEPS' in caps below. Center - 'BERLIN TV TOWER' in bold caps with 'FERNSEHTURM' in lighter weight below. Right - 'INAUGURATED' in bold caps with 'OCTOBER 3, 1969' below. All typography in modern sans-serif font (such as Inter or Helvetica), color #2D3748, clean minimal technical diagram style. Horizontal connector lines are thin, precise, and clearly visible, touching the tower structure at exact corresponding measurement points. Professional architectural elevation drawing aesthetic with dynamic low angle perspective creating sense of height and grandeur, poster-ready infographic design with perfect visual hierarchy.",
+    "Soaking wet capybara taking shelter under a banana leaf in the rainy jungle, close up photo",
+    "A kawaii die-cut sticker of a chubby orange cat, featuring big sparkly eyes and a happy smile with paws raised in greeting and a heart-shaped pink nose. The design should have smooth rounded lines with black outlines and soft gradient shading with pink cheeks.",
+]
+
+_EXAMPLES_DIR = Path(__file__).resolve().parent / "examples"
+
+# Editing examples as (prompt, [image paths]) from the FLUX.2 [klein] space.
+EDIT_EXAMPLES = [
+    (
+        "The person from image 1 is petting the cat from image 2, the bird from image 3 is next to them",
+        [
+            str(_EXAMPLES_DIR / "woman1.webp"),
+            str(_EXAMPLES_DIR / "cat_window.webp"),
+            str(_EXAMPLES_DIR / "bird.webp"),
+        ],
+    ),
+]
 
 
 @st.cache_resource
@@ -137,6 +167,28 @@ def _resolve_prompt(prompt, image_list, auto_enhance):
     return enhanced, True
 
 
+def _set_example_prompt(example):
+    """Fill the prompt box from a text-to-image example (clears any example images)."""
+    st.session_state.prompt_input = example
+    st.session_state.pop("example_images", None)
+
+
+def _load_edit_example(prompt, images):
+    """Load an editing example: its prompt plus its bundled input images."""
+    st.session_state.prompt_input = prompt
+    st.session_state.example_images = list(images)
+    # Reveal the input panel once (not on every later rerun — see the expander).
+    st.session_state.expand_input_once = True
+
+
+def _clear_example_images():
+    st.session_state.pop("example_images", None)
+
+
+def _truncate(text, length=70):
+    return text if len(text) <= length else text[:length].rstrip() + "…"
+
+
 class _ProgressReporter:
     def __init__(self, callback):
         self._callback = callback
@@ -157,7 +209,7 @@ def _dimensions_from_images(image_list):
     else:
         new_h = 1024
         new_w = round(1024 * aspect / 32) * 32
-    return max(512, min(MAX_IMAGE_SIZE, new_w)), max(512, min(MAX_IMAGE_SIZE, new_h))
+    return max(256, min(MAX_IMAGE_SIZE, new_w)), max(256, min(MAX_IMAGE_SIZE, new_h))
 
 
 def infer(
@@ -219,192 +271,246 @@ def infer(
 
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="FLUX.2 Klein Pipeline", layout="centered")
+    st.set_page_config(page_title="FLUX.2 Klein Pipeline", layout="wide")
 
     st.title("FLUX.2 Klein Pipeline")
+    st.markdown(
+        "FLUX.2 [Klein] is a fast, unified image generation and editing model "
+        "designed for fast inference. "
+        "[[model]](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) · "
+        "[[blog]](https://bfl.ai/blog/flux2-klein-towards-interactive-visual-intelligence)"
+    )
 
-    col_task, col_quality = st.columns(2)
-    with col_task:
-        task_mode = st.pills(
-            "Task",
-            options=["Generate", "Edit"],
-            default="Generate",
-            key="task_pills",
-            label_visibility="collapsed",
-        )
-    with col_quality:
-        mode = st.pills(
-            "Quality",
-            options=["Fast", "Quality"],
-            default="Fast",
-            key="mode_pills",
-            label_visibility="collapsed",
-        )
+    col_controls, col_output = st.columns([2, 3], gap="large")
 
-    if task_mode is None:
-        task_mode = "Generate"
-    if mode is None:
-        mode = "Fast"
+    # Reserve output slots in the right column (filled after inference / on rerun)
+    with col_output:
+        progress_slot = st.empty()
+        result_slot = st.empty()
 
-    if mode != st.session_state.get("prev_mode"):
-        st.session_state.prev_mode = mode
-        defaults = MODE_DEFAULTS[mode]
-        st.session_state.guidance_scale_slider = defaults["cfg"]
-        st.session_state.steps_slider = defaults["steps"]
-
-    if task_mode == "Generate":
-        prompt = st.text_area(
-            "Prompt",
-            placeholder="Describe the image…",
-            key="prompt_input",
-            height=160,
-            label_visibility="collapsed",
-        )
-        uploaded_files = None
-    else:
-        col_prompt, col_images = st.columns(2)
+    with col_controls:
+        # Prompt + Run, inline at the top (like the Gradio space)
+        col_prompt, col_run = st.columns([4, 1])
         with col_prompt:
-            prompt = st.text_area(
+            prompt = st.text_input(
                 "Prompt",
-                placeholder="Describe the edit…",
+                placeholder="Enter your prompt",
                 key="prompt_input",
-                height=160,
                 label_visibility="collapsed",
             )
-        with col_images:
+        with col_run:
+            run_clicked = st.button("Run", type="primary", width="stretch")
+
+        # Optional input images — uploading any switches to editing automatically.
+        # Auto-open once when an example loads, then respect the user's toggle.
+        _has_example_images = bool(st.session_state.get("example_images"))
+        with st.expander(
+            "Input image(s) (optional)",
+            expanded=st.session_state.pop("expand_input_once", False),
+        ):
             uploaded_files = st.file_uploader(
                 "Input images",
                 type=["jpg", "jpeg", "png", "webp"],
                 accept_multiple_files=True,
                 label_visibility="collapsed",
             )
+            if not uploaded_files and _has_example_images:
+                st.caption("Loaded example images:")
+                st.image(st.session_state.example_images, width=80)
+                st.button("Clear example images", on_click=_clear_example_images)
 
-    auto_enhance = st.checkbox(
-        "Enhance prompt",
-        value=False,
-        key="auto_enhance_checkbox",
-    )
-
-    image_list = None
-    if uploaded_files:
-        image_list = [Image.open(f) for f in uploaded_files]
-
-    _image_key = (
-        tuple((f.name, f.file_id) for f in uploaded_files) if uploaded_files else ()
-    )
-    if _image_key != st.session_state.get("prev_images", ()):
-        st.session_state.prev_images = _image_key
-        if image_list:
-            _w, _h = _dimensions_from_images(image_list)
-            st.session_state.width_slider = _w
-            st.session_state.height_slider = _h
-        else:
-            st.session_state.width_slider = 1024
-            st.session_state.height_slider = 1024
-
-    if "last_prompt" not in st.session_state:
-        st.session_state.last_prompt = ""
-
-    if prompt != st.session_state.last_prompt:
-        st.session_state.last_prompt = prompt
-        st.session_state.pop("auto_enhanced_prompt", None)
-
-    final_prompt = prompt
-
-    st.session_state.setdefault("width_slider", 1024)
-    st.session_state.setdefault("height_slider", 1024)
-
-    with st.expander("Settings"):
-        seed_val = st.slider(
-            "Seed",
-            min_value=0,
-            max_value=MAX_SEED,
-            value=0,
-            step=1,
+        # Mode (speed/quality). Display labels map back to internal MODE_DEFAULTS keys.
+        mode_label = st.radio(
+            "Mode",
+            options=list(MODE_LABELS.values()),
+            index=0,
+            key="mode_radio",
+            horizontal=True,
         )
+        mode = LABEL_TO_MODE[mode_label]
 
-        randomize_seed = st.checkbox("Randomize seed", value=True)
+        if mode != st.session_state.get("prev_mode"):
+            st.session_state.prev_mode = mode
+            defaults = MODE_DEFAULTS[mode]
+            st.session_state.guidance_scale_slider = defaults["cfg"]
+            st.session_state.steps_slider = defaults["steps"]
 
-        col1, col2 = st.columns(2)
-        with col1:
-            width = st.slider(
-                "Width",
-                min_value=512,
-                max_value=MAX_IMAGE_SIZE,
-                step=32,
-                key="width_slider",
-            )
-        with col2:
-            height = st.slider(
-                "Height",
-                min_value=512,
-                max_value=MAX_IMAGE_SIZE,
-                step=32,
-                key="height_slider",
-            )
+        image_list = None
+        if uploaded_files:
+            # A manual upload overrides any loaded example images
+            st.session_state.pop("example_images", None)
+            image_list = [Image.open(f) for f in uploaded_files]
+            _image_key = tuple((f.name, f.file_id) for f in uploaded_files)
+        elif st.session_state.get("example_images"):
+            example_images = st.session_state.example_images
+            try:
+                image_list = [Image.open(p) for p in example_images]
+                _image_key = tuple(example_images)
+            except OSError:
+                st.warning("Could not load the example images.")
+                st.session_state.pop("example_images", None)
+                _image_key = ()
+        else:
+            _image_key = ()
+        if _image_key != st.session_state.get("prev_images", ()):
+            st.session_state.prev_images = _image_key
+            # An enhanced prompt is tied to its image set; drop it when that changes.
+            st.session_state.pop("auto_enhanced_prompt", None)
+            if image_list:
+                _w, _h = _dimensions_from_images(image_list)
+                st.session_state.width_slider = _w
+                st.session_state.height_slider = _h
+            else:
+                st.session_state.width_slider = 1024
+                st.session_state.height_slider = 1024
 
-        col3, col4 = st.columns(2)
-        with col3:
-            guidance_scale = st.slider(
-                "Guidance scale",
-                min_value=0.0,
-                max_value=10.0,
-                step=0.1,
-                key="guidance_scale_slider",
+        if "last_prompt" not in st.session_state:
+            st.session_state.last_prompt = ""
+
+        if prompt != st.session_state.last_prompt:
+            st.session_state.last_prompt = prompt
+            st.session_state.pop("auto_enhanced_prompt", None)
+
+        final_prompt = prompt
+
+        st.session_state.setdefault("width_slider", 1024)
+        st.session_state.setdefault("height_slider", 1024)
+
+        with st.expander("Advanced Settings", expanded=False):
+            auto_enhance = st.checkbox(
+                "Prompt Upsampling",
+                value=False,
+                key="auto_enhance_checkbox",
             )
-        with col4:
-            num_inference_steps = st.slider(
-                "Number of inference steps",
-                min_value=1,
-                max_value=100,
+            st.caption("Automatically enhance the prompt using a VLM")
+
+            randomize_seed = st.checkbox("Randomize seed", value=True)
+            seed_val = st.number_input(
+                "Seed",
+                min_value=0,
+                max_value=MAX_SEED,
+                value=0,
                 step=1,
-                key="steps_slider",
+                disabled=randomize_seed,
             )
 
-    run_disabled = task_mode == "Edit" and not image_list
-    if st.button("Run", type="primary", disabled=run_disabled):
-        st.session_state.pop("auto_enhanced_prompt", None)
+            col_w, col_h = st.columns(2)
+            with col_w:
+                width = st.slider(
+                    "Width",
+                    min_value=256,
+                    max_value=MAX_IMAGE_SIZE,
+                    step=32,
+                    key="width_slider",
+                )
+            with col_h:
+                height = st.slider(
+                    "Height",
+                    min_value=256,
+                    max_value=MAX_IMAGE_SIZE,
+                    step=32,
+                    key="height_slider",
+                )
 
-        cache = st.session_state.setdefault("_enhance_cache", {})
-        cache_key = (final_prompt, _image_key) if auto_enhance else None
+            col_steps, col_guidance = st.columns(2)
+            with col_steps:
+                num_inference_steps = st.slider(
+                    "Number of inference steps",
+                    min_value=1,
+                    max_value=100,
+                    step=1,
+                    key="steps_slider",
+                )
+            with col_guidance:
+                guidance_scale = st.slider(
+                    "Guidance scale",
+                    min_value=0.0,
+                    max_value=10.0,
+                    step=0.1,
+                    format="%g",
+                    key="guidance_scale_slider",
+                )
 
-        if cache_key is not None and cache_key in cache:
-            run_prompt, was_auto_enhanced = cache[cache_key], True
-        else:
-            run_prompt, was_auto_enhanced = _resolve_prompt(
-                final_prompt, image_list, auto_enhance
+        st.markdown("**Examples**")
+        _ex_cols = st.columns(2) + st.columns(2)
+        for _i, (_col, _example) in enumerate(zip(_ex_cols, EXAMPLE_PROMPTS)):
+            with _col:
+                st.button(
+                    _truncate(_example),
+                    key=f"example_{_i}",
+                    on_click=_set_example_prompt,
+                    args=(_example,),
+                    width="stretch",
+                    help=_example,
+                )
+
+        st.markdown("**Examples**")
+        for _i, (_ex_prompt, _ex_imgs) in enumerate(EDIT_EXAMPLES):
+            _col_prompt, _col_imgs = st.columns([3, 2])
+            with _col_prompt:
+                st.button(
+                    _truncate(_ex_prompt),
+                    key=f"edit_example_{_i}",
+                    on_click=_load_edit_example,
+                    args=(_ex_prompt, _ex_imgs),
+                    width="stretch",
+                    help=_ex_prompt,
+                )
+            with _col_imgs:
+                st.image(_ex_imgs, width=56)
+
+        if run_clicked:
+            st.session_state.pop("auto_enhanced_prompt", None)
+
+            cache = st.session_state.setdefault("_enhance_cache", {})
+            cache_key = (final_prompt, _image_key) if auto_enhance else None
+
+            if cache_key is not None and cache_key in cache:
+                run_prompt, was_auto_enhanced = cache[cache_key], True
+            else:
+                run_prompt, was_auto_enhanced = _resolve_prompt(
+                    final_prompt, image_list, auto_enhance
+                )
+                if was_auto_enhanced and cache_key is not None:
+                    cache[cache_key] = run_prompt
+
+            if was_auto_enhanced:
+                st.session_state.auto_enhanced_prompt = run_prompt
+
+            progress_bar = progress_slot.progress(0, text="Starting...")
+
+            def _update_progress(step, total):
+                progress_bar.progress(step / total, text=f"Step {step}/{total}")
+
+            image, used_seed = infer(
+                run_prompt,
+                seed_val,
+                randomize_seed,
+                width,
+                height,
+                guidance_scale,
+                num_inference_steps,
+                mode=mode,
+                image_list=image_list,
+                progress_callback=_update_progress,
             )
-            if was_auto_enhanced and cache_key is not None:
-                cache[cache_key] = run_prompt
+            progress_slot.empty()
+            st.session_state.result_image = image
+            st.session_state.result_seed = used_seed
 
-        if was_auto_enhanced:
-            st.session_state.auto_enhanced_prompt = run_prompt
+        if "auto_enhanced_prompt" in st.session_state:
+            st.info(f"Enhanced prompt: {st.session_state.auto_enhanced_prompt}")
 
-        progress_bar = st.progress(0, text="Starting...")
-
-        def _update_progress(step, total):
-            progress_bar.progress(step / total, text=f"Step {step}/{total}")
-
-        image, used_seed = infer(
-            run_prompt,
-            seed_val,
-            randomize_seed,
-            width,
-            height,
-            guidance_scale,
-            num_inference_steps,
-            mode=mode,
-            image_list=image_list,
-            progress_callback=_update_progress,
-        )
-        progress_bar.empty()
-        st.session_state.result_image = image
-        st.session_state.result_seed = used_seed if randomize_seed else None
-
-    if "auto_enhanced_prompt" in st.session_state:
-        st.info(f"Enhanced prompt: {st.session_state.auto_enhanced_prompt}")
-
+    # Output (right column): result image, or a placeholder canvas
     if "result_image" in st.session_state:
-        st.image(st.session_state.result_image)
-        if st.session_state.result_seed is not None:
-            st.caption(f"Seed: {st.session_state.result_seed}")
+        with result_slot.container():
+            st.image(st.session_state.result_image, width="stretch")
+            if st.session_state.result_seed is not None:
+                st.caption(f"Seed: {st.session_state.result_seed}")
+    else:
+        result_slot.markdown(
+            "<div style='display:flex;align-items:center;justify-content:center;"
+            "height:420px;border:1px solid #333;border-radius:8px;color:#888;'>"
+            "🖼️ Your image will appear here</div>",
+            unsafe_allow_html=True,
+        )
