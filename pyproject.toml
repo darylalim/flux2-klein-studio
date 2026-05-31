@@ -1,7 +1,7 @@
 [project]
 name = "flux2-klein-pipeline"
-version = "0.2.1"
-description = "Generate and edit images with FLUX.2 Klein on Apple Silicon via MLX (mflux + mlx-vlm)"
+version = "0.3.0"
+description = "Generate and edit images with the Black Forest Labs FLUX.2 Klein 4B model on Apple Silicon with MLX."
 requires-python = ">=3.12"
 dependencies = [
     "mflux",
