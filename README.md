@@ -28,10 +28,13 @@ Generate and edit images with the Black Forest Labs [FLUX.2 Klein 4B](https://hu
 
 Models are downloaded automatically on first use (~8GB per FLUX.2 Klein variant, ~1GB for SmolVLM).
 
-## Testing
+## Development
 
-Run the unit tests (no GPU or model download required):
+Lint, format, type-check, and run the unit tests (no GPU or model download required):
 
 ```bash
-uv run pytest
+uv run ruff check .   # Lint
+uv run ruff format .  # Format
+uv run ty check .     # Type check
+uv run pytest         # Unit tests
 ```

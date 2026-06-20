@@ -5,8 +5,10 @@
 # Python
 __pycache__/
 
-# Caches & tooling
-.DS_Store
+# Tooling caches
 .pytest_cache/
 .ruff_cache/
 .superpowers/
+
+# macOS
+.DS_Store
