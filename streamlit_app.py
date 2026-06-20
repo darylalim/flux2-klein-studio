@@ -1,5 +1,6 @@
 import random
 from pathlib import Path
+from typing import cast
 
 import streamlit as st
 from mflux.models.common.config import ModelConfig
@@ -120,7 +121,7 @@ UPSAMPLE_PROMPT_WITH_IMAGES = (
 )
 
 
-def upsample_prompt(prompt, image_list=None):
+def upsample_prompt(prompt, image_list: list | None = None):
     try:
         model, processor, config = _get_vlm()
         system_prompt = (
@@ -130,17 +131,22 @@ def upsample_prompt(prompt, image_list=None):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ]
-        formatted_prompt = apply_chat_template(
-            processor,
-            config,
-            messages,
-            num_images=len(image_list) if image_list else 0,
+        # apply_chat_template returns a str at runtime for SmolVLM, though the
+        # stub types it as a broader union.
+        formatted_prompt = cast(
+            str,
+            apply_chat_template(
+                processor,
+                config,
+                messages,
+                num_images=len(image_list) if image_list else 0,
+            ),
         )
         result = vlm_generate(
             model,
             processor,
-            formatted_prompt,  # ty: ignore[invalid-argument-type]  # apply_chat_template returns str at runtime
-            image=image_list if image_list else None,  # ty: ignore[invalid-argument-type]  # accepts PIL Images at runtime
+            formatted_prompt,
+            image=image_list if image_list else None,  # ty: ignore[invalid-argument-type]  # mlx_vlm types image as str|list[str] (no Optional) but accepts None/PIL Images at runtime
             max_tokens=150,
             temperature=0.7,
             top_p=0.9,
