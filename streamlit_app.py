@@ -271,9 +271,9 @@ def infer(
 
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="FLUX.2 Klein Pipeline", layout="wide")
+    st.set_page_config(page_title="FLUX.2 Klein Studio", layout="wide")
 
-    st.title("FLUX.2 Klein Pipeline")
+    st.title("FLUX.2 Klein Studio")
     st.markdown(
         "FLUX.2 [Klein] is a fast, unified image generation and editing model "
         "designed for fast inference. "

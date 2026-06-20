@@ -1,5 +1,5 @@
 [project]
-name = "flux2-klein-pipeline"
+name = "flux2-klein-studio"
 version = "0.3.0"
 description = "Generate and edit images with the Black Forest Labs FLUX.2 Klein 4B model on Apple Silicon with MLX."
 requires-python = ">=3.12"

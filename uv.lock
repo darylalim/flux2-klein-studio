@@ -549,7 +549,7 @@ wheels = [
 ]
 
 [[package]]
-name = "flux2-klein-pipeline"
+name = "flux2-klein-studio"
 version = "0.3.0"
 source = { virtual = "." }
 dependencies = [
