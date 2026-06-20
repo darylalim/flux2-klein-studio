@@ -1391,6 +1391,11 @@ class TestMoreCoreLogic:
 
 
 class TestUIWidgets:
+    def test_app_title(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            assert any(t.value == "FLUX.2 Klein Studio" for t in at.title)
+
     def test_dimension_sliders_range(self):
         with _app_test() as app:
             at = app.run(timeout=10)
