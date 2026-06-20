@@ -31,6 +31,8 @@ Application code lives in `streamlit_app.py`, structured in four sections (with 
 
 ## Commands
 
+When working with Python, invoke the relevant `/astral:<skill>` for uv, ty, and ruff to ensure best practices are followed.
+
 ```bash
 uv run ruff check .              # Lint
 uv run ruff check --fix .        # Lint with auto-fix
