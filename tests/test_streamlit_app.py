@@ -413,10 +413,8 @@ class TestInfer:
         mock_model.generate_image.side_effect = RuntimeError("boom")
         streamlit_app, _, _ = _reload_app(mock_model)
         with patch("streamlit_app.Flux2Klein", return_value=mock_model):
-            try:
+            with contextlib.suppress(RuntimeError):
                 streamlit_app.infer("a cat", progress_callback=MagicMock())
-            except RuntimeError:
-                pass
             assert mock_model.callbacks.in_loop == []
 
 

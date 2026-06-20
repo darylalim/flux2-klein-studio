@@ -233,10 +233,7 @@ def infer(
     if randomize_seed:
         seed = random.randint(0, MAX_SEED)
 
-    if image_list:
-        model = EDIT_MODELS[mode]()
-    else:
-        model = MODELS[mode]()
+    model = EDIT_MODELS[mode]() if image_list else MODELS[mode]()
 
     reporter = None
     if progress_callback is not None:
@@ -433,7 +430,9 @@ if __name__ == "__main__":
 
         st.markdown("**Examples**")
         _ex_cols = st.columns(2) + st.columns(2)
-        for _i, (_col, _example) in enumerate(zip(_ex_cols, EXAMPLE_PROMPTS)):
+        for _i, (_col, _example) in enumerate(
+            zip(_ex_cols, EXAMPLE_PROMPTS, strict=False)
+        ):
             with _col:
                 st.button(
                     _truncate(_example),

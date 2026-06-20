@@ -15,3 +15,7 @@ dev = [
     "ruff",
     "ty",
 ]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]  # line length is enforced by the formatter
