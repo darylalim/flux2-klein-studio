@@ -139,8 +139,8 @@ def upsample_prompt(prompt, image_list=None):
         result = vlm_generate(
             model,
             processor,
-            formatted_prompt,  # type: ignore[arg-type]  # apply_chat_template returns str at runtime
-            image=image_list if image_list else None,  # type: ignore[arg-type]  # accepts PIL Images at runtime
+            formatted_prompt,  # ty: ignore[invalid-argument-type]  # apply_chat_template returns str at runtime
+            image=image_list if image_list else None,  # ty: ignore[invalid-argument-type]  # accepts PIL Images at runtime
             max_tokens=150,
             temperature=0.7,
             top_p=0.9,
