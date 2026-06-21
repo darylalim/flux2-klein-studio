@@ -1515,3 +1515,64 @@ class TestUIWidgets:
         with _app_test() as app:
             at = app.run(timeout=10)
             assert at.segmented_control(key="mode_radio").proto.required is True
+
+    def test_settings_use_toggles(self):
+        # Prompt upsampling and Randomize seed are settings, so they render as
+        # toggles (not checkboxes).
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            labels = {t.label for t in at.toggle}
+            assert "Prompt upsampling" in labels
+            assert "Randomize seed" in labels
+
+    def test_infer_failure_is_handled(self):
+        from streamlit.testing.v1 import AppTest
+
+        mock_model = _make_mock_model()
+        mock_model.generate_image.side_effect = RuntimeError("backend exploded")
+        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+        with (
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
+            patch(
+                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
+            ),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch(
+                "mlx_vlm.load",
+                return_value=(mock_vlm_model, mock_vlm_processor),
+            ),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+            patch("streamlit.cache_resource", lambda f: f),
+        ):
+            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            # A generation failure is surfaced, not raised as an uncaught crash.
+            assert not at.exception
+            assert any("failed" in e.value.lower() for e in at.error)
+            assert "result_image" not in at.session_state
+
+    def test_size_preserved_when_images_cleared(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            # Loading an editing example sizes the sliders from the image; a
+            # manual width must survive clearing the images (not reset to 1024).
+            at.button(key="edit_example_0").click().run(timeout=10)
+            at.slider(key="width_slider").set_value(512).run(timeout=10)
+            next(b for b in at.button if b.label == "Clear example images").click().run(
+                timeout=10
+            )
+            assert at.slider(key="width_slider").value == 512
+
+    def test_enhanced_prompt_banner_follows_toggle(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            at.session_state["auto_enhanced_prompt"] = "an enhanced prompt"
+            # Upsampling off (default) -> the banner stays hidden.
+            at.run(timeout=10)
+            assert not any("Enhanced prompt" in i.value for i in at.info)
+            # Turn upsampling on -> the banner appears for the stored prompt.
+            at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
+            assert any("Enhanced prompt" in i.value for i in at.info)

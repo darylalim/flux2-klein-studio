@@ -516,6 +516,7 @@ if __name__ == "__main__":
             if was_auto_enhanced:
                 st.session_state.auto_enhanced_prompt = run_prompt
 
+            generation_error = None
             with (
                 result_slot.container(border=True),
                 st.status("Generating image…", expanded=True) as status,
@@ -540,11 +541,16 @@ if __name__ == "__main__":
                     )
                 except Exception as exc:
                     status.update(label="Generation failed", state="error")
-                    st.error(f"Image generation failed: {exc}")
+                    generation_error = str(exc)
                 else:
                     status.update(label="Image generated", state="complete")
                     st.session_state.result_image = image
                     st.session_state.result_seed = used_seed
+
+            # Surface a failure in the controls column, where it survives the
+            # bottom block re-rendering result_slot (which overwrites the status).
+            if generation_error is not None:
+                st.error(f"Image generation failed: {generation_error}")
 
         if auto_enhance and "auto_enhanced_prompt" in st.session_state:
             st.info(
