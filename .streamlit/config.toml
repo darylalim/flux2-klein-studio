@@ -15,7 +15,7 @@ textColor = "#1b1b29"
 borderColor = "#e4e4ee"
 
 [theme.dark]
-primaryColor = "#9F8BFF"
+primaryColor = "#7457FF"
 backgroundColor = "#0f0f15"
 secondaryBackgroundColor = "#1a1a24"
 textColor = "#e8e8f0"
