@@ -624,12 +624,13 @@ wheels = [
 
 [[package]]
 name = "flux2-klein-studio"
-version = "0.4.0"
+version = "0.5.0"
 source = { virtual = "." }
 dependencies = [
     { name = "mflux" },
     { name = "mlx-vlm", version = "0.4.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux'" },
     { name = "mlx-vlm", version = "0.6.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
+    { name = "pillow" },
     { name = "streamlit" },
 ]
 
@@ -644,6 +645,7 @@ dev = [
 requires-dist = [
     { name = "mflux" },
     { name = "mlx-vlm" },
+    { name = "pillow" },
     { name = "streamlit" },
 ]
 

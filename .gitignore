@@ -10,5 +10,8 @@ __pycache__/
 .ruff_cache/
 .superpowers/
 
+# Streamlit (config.toml is tracked; never commit secrets)
+.streamlit/secrets.toml
+
 # macOS
 .DS_Store

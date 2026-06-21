@@ -6,7 +6,7 @@ Generate and edit images with the Black Forest Labs [FLUX.2 Klein 4B](https://hu
 
 - Unified generation and editing — text-to-image by default; uploading one or more images switches to editing automatically
 - Two speed/quality modes: Distilled (4 steps) and Base (50 steps)
-- Native Apple Silicon performance via MLX — no PyTorch required
+- Native Apple Silicon performance via MLX — inference runs on MLX, not PyTorch
 - Two-column studio layout: controls on the left, generated image on the right
 - Multi-image upload for editing and compositing workflows
 - Auto-dimension: width/height sliders adjust to match the first input image's aspect ratio
@@ -15,6 +15,7 @@ Generate and edit images with the Black Forest Labs [FLUX.2 Klein 4B](https://hu
 - Per-step progress bar shown inside the output frame during inference
 - Configurable seed, dimensions, guidance scale, and inference steps in Advanced settings
 - Native light/dark theme via `.streamlit/config.toml` (no custom CSS)
+- Graceful failure handling — empty runs are blocked; unreadable uploads and generation errors surface inline instead of crashing the app
 
 ## Requirements
 
