@@ -11,6 +11,8 @@ from mlx_vlm.prompt_utils import apply_chat_template
 from mlx_vlm.utils import load_config
 from PIL import Image
 
+APP_TITLE = "FLUX.2 Klein Studio"
+
 MAX_SEED = 2_147_483_647
 MAX_IMAGE_SIZE = 1024
 
@@ -274,9 +276,9 @@ def infer(
 
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="FLUX.2 Klein Studio", layout="wide")
+    st.set_page_config(page_title=APP_TITLE, layout="wide")
 
-    st.title("FLUX.2 Klein Studio")
+    st.title(APP_TITLE)
     st.markdown(
         "FLUX.2 [Klein] is a fast, unified image generation and editing model "
         "designed for fast inference. "
@@ -435,11 +437,9 @@ if __name__ == "__main__":
                 )
 
         st.markdown("**Examples**")
-        _ex_cols = st.columns(2) + st.columns(2)
-        for _i, (_col, _example) in enumerate(
-            zip(_ex_cols, EXAMPLE_PROMPTS, strict=False)
-        ):
-            with _col:
+        _ex_cols = st.columns(2)
+        for _i, _example in enumerate(EXAMPLE_PROMPTS):
+            with _ex_cols[_i % 2]:
                 st.button(
                     _truncate(_example),
                     key=f"example_{_i}",
@@ -449,7 +449,7 @@ if __name__ == "__main__":
                     help=_example,
                 )
 
-        st.markdown("**Examples**")
+        st.markdown("**Editing examples**")
         for _i, (_ex_prompt, _ex_imgs) in enumerate(EDIT_EXAMPLES):
             _col_prompt, _col_imgs = st.columns([3, 2])
             with _col_prompt:

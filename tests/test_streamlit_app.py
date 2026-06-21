@@ -73,6 +73,11 @@ def _reload_app(mock_model, *, mock_edit_model=None, mock_vlm=None):
 
 
 class TestConstants:
+    def test_app_title(self):
+        import streamlit_app
+
+        assert streamlit_app.APP_TITLE == "FLUX.2 Klein Studio"
+
     def test_max_seed(self):
         import streamlit_app
 
@@ -1391,10 +1396,12 @@ class TestMoreCoreLogic:
 
 
 class TestUIWidgets:
-    def test_app_title(self):
+    def test_app_title_renders(self):
+        import streamlit_app
+
         with _app_test() as app:
             at = app.run(timeout=10)
-            assert any(t.value == "FLUX.2 Klein Studio" for t in at.title)
+            assert any(t.value == streamlit_app.APP_TITLE for t in at.title)
 
     def test_dimension_sliders_range(self):
         with _app_test() as app:
@@ -1423,7 +1430,9 @@ class TestUIWidgets:
     def test_two_examples_sections_render(self):
         with _app_test() as app:
             at = app.run(timeout=10)
-            assert sum(1 for m in at.markdown if m.value == "**Examples**") == 2
+            headers = {m.value for m in at.markdown}
+            assert "**Examples**" in headers
+            assert "**Editing examples**" in headers
             assert at.button(key="edit_example_0").label
 
     def test_t2i_example_clears_loaded_edit_images(self):
