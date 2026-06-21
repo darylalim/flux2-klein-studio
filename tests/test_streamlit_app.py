@@ -1034,122 +1034,32 @@ class TestStreamlitApp:
             mock_button.assert_not_called()
 
     def test_mode_defaults_to_distilled(self):
-        from streamlit.testing.v1 import AppTest
-
-        mock_model = _make_mock_model()
-        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
-            patch(
-                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
-            ),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch(
-                "mlx_vlm.load",
-                return_value=(mock_vlm_model, mock_vlm_processor),
-            ),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-            patch("streamlit.cache_resource", lambda f: f),
-        ):
-            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+        with _app_test() as app:
+            at = app.run(timeout=10)
             assert at.segmented_control(key="mode_radio").value == "Distilled (4 steps)"
 
     def test_uploader_always_present(self):
-        from streamlit.testing.v1 import AppTest
-
-        mock_model = _make_mock_model()
-        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
-            patch(
-                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
-            ),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch(
-                "mlx_vlm.load",
-                return_value=(mock_vlm_model, mock_vlm_processor),
-            ),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-            patch("streamlit.cache_resource", lambda f: f),
-        ):
-            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+        with _app_test() as app:
+            at = app.run(timeout=10)
             # Unified layout: the optional uploader is always rendered
             assert len(at.get("file_uploader")) == 1
 
     def test_run_button_present_and_enabled(self):
-        from streamlit.testing.v1 import AppTest
-
-        mock_model = _make_mock_model()
-        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
-            patch(
-                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
-            ),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch(
-                "mlx_vlm.load",
-                return_value=(mock_vlm_model, mock_vlm_processor),
-            ),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-            patch("streamlit.cache_resource", lambda f: f),
-        ):
-            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+        with _app_test() as app:
+            at = app.run(timeout=10)
             run_buttons = [b for b in at.button if b.label == "Run"]
             assert len(run_buttons) == 1
             # Editing is implicit now, so Run is never disabled
             assert run_buttons[0].disabled is False
 
     def test_prompt_uses_enter_prompt_placeholder(self):
-        from streamlit.testing.v1 import AppTest
-
-        mock_model = _make_mock_model()
-        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
-            patch(
-                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
-            ),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch(
-                "mlx_vlm.load",
-                return_value=(mock_vlm_model, mock_vlm_processor),
-            ),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-            patch("streamlit.cache_resource", lambda f: f),
-        ):
-            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+        with _app_test() as app:
+            at = app.run(timeout=10)
             assert at.text_input(key="prompt_input").placeholder == "Enter your prompt"
 
     def test_mode_change_updates_steps_and_guidance(self):
-        from streamlit.testing.v1 import AppTest
-
-        mock_model = _make_mock_model()
-        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
-            patch(
-                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
-            ),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch(
-                "mlx_vlm.load",
-                return_value=(mock_vlm_model, mock_vlm_processor),
-            ),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-            patch("streamlit.cache_resource", lambda f: f),
-        ):
-            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+        with _app_test() as app:
+            at = app.run(timeout=10)
             assert at.slider(key="steps_slider").value == 4
             assert at.slider(key="guidance_scale_slider").value == 1.0
             at.segmented_control(key="mode_radio").set_value("Base (50 steps)").run(
@@ -1159,51 +1069,15 @@ class TestStreamlitApp:
             assert at.slider(key="guidance_scale_slider").value == 4.0
 
     def test_example_buttons_render(self):
-        from streamlit.testing.v1 import AppTest
-
-        mock_model = _make_mock_model()
-        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
-            patch(
-                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
-            ),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch(
-                "mlx_vlm.load",
-                return_value=(mock_vlm_model, mock_vlm_processor),
-            ),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-            patch("streamlit.cache_resource", lambda f: f),
-        ):
-            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+        with _app_test() as app:
+            at = app.run(timeout=10)
             # Run button + 4 example buttons
             assert len(at.button) >= 5
             assert at.button(key="example_2").label  # capybara text-to-image example
 
     def test_clicking_example_fills_prompt(self):
-        from streamlit.testing.v1 import AppTest
-
-        mock_model = _make_mock_model()
-        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
-            patch(
-                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
-            ),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch(
-                "mlx_vlm.load",
-                return_value=(mock_vlm_model, mock_vlm_processor),
-            ),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-            patch("streamlit.cache_resource", lambda f: f),
-        ):
-            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+        with _app_test() as app:
+            at = app.run(timeout=10)
             example = at.button(key="example_2")  # capybara prompt
             example.click().run(timeout=10)
             # Button labels are truncated; clicking sets the full prompt
@@ -1212,26 +1086,8 @@ class TestStreamlitApp:
             assert value.endswith("close up photo")
 
     def test_edit_example_loads_prompt_and_images(self):
-        from streamlit.testing.v1 import AppTest
-
-        mock_model = _make_mock_model()
-        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
-            patch(
-                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
-            ),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch(
-                "mlx_vlm.load",
-                return_value=(mock_vlm_model, mock_vlm_processor),
-            ),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-            patch("streamlit.cache_resource", lambda f: f),
-        ):
-            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+        with _app_test() as app:
+            at = app.run(timeout=10)
             edit_example = at.button(key="edit_example_0")
             edit_example.click().run(timeout=10)
             assert "petting" in (at.text_input(key="prompt_input").value or "")
@@ -1251,23 +1107,37 @@ class _FakeSessionState(dict):
 
 
 @contextlib.contextmanager
-def _app_test():
-    # Build an AppTest for streamlit_app.py with the heavy deps mocked out.
-    mock_model = _make_mock_model()
+def _patched_models(txt2img, edit, *, vlm_text=None):
+    """Patch the heavy deps and yield (AppTest factory, mlx_vlm.generate mock).
+
+    Pass distinct ``txt2img``/``edit`` mocks to assert which pipeline ran, or
+    ``vlm_text`` to make the VLM return a fixed enhanced prompt.
+    """
     mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+    vlm_result = (
+        _MockGenerationResult() if vlm_text is None else _MockGenerationResult(vlm_text)
+    )
     with (
-        patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
-        patch("mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model),
+        patch("mflux.models.flux2.variants.Flux2Klein", return_value=txt2img),
+        patch("mflux.models.flux2.variants.Flux2KleinEdit", return_value=edit),
         patch("mflux.models.common.config.ModelConfig"),
         patch("mlx_vlm.load", return_value=(mock_vlm_model, mock_vlm_processor)),
-        patch("mlx_vlm.generate"),
+        patch("mlx_vlm.generate", return_value=vlm_result) as vlm_generate,
         patch("mlx_vlm.prompt_utils.apply_chat_template"),
         patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
         patch("streamlit.cache_resource", lambda f: f),
     ):
         from streamlit.testing.v1 import AppTest
 
-        yield AppTest.from_file("streamlit_app.py")
+        yield AppTest.from_file("streamlit_app.py"), vlm_generate
+
+
+@contextlib.contextmanager
+def _app_test():
+    """Yield an AppTest factory with one shared mock model for both pipelines."""
+    mock_model = _make_mock_model()
+    with _patched_models(mock_model, mock_model) as (app, _generate):
+        yield app
 
 
 class TestExamplesAndLabels:
@@ -1458,25 +1328,10 @@ class TestUIWidgets:
             assert not any(b.label == "Clear example images" for b in at.button)
 
     def test_example_run_routes_through_edit_model(self):
-        from streamlit.testing.v1 import AppTest
-
         mock_txt2img = _make_mock_model()
         mock_edit = _make_mock_model()
-        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_txt2img),
-            patch("mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_edit),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch(
-                "mlx_vlm.load",
-                return_value=(mock_vlm_model, mock_vlm_processor),
-            ),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-            patch("streamlit.cache_resource", lambda f: f),
-        ):
-            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+        with _patched_models(mock_txt2img, mock_edit) as (app, _generate):
+            at = app.run(timeout=10)
             # Load the editing example, then Run — loaded images must route to edit.
             at.button(key="edit_example_0").click().run(timeout=10)
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
@@ -1484,25 +1339,10 @@ class TestUIWidgets:
             assert not mock_txt2img.generate_image.called
 
     def test_empty_run_is_guarded(self):
-        from streamlit.testing.v1 import AppTest
-
         mock_txt2img = _make_mock_model()
         mock_edit = _make_mock_model()
-        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_txt2img),
-            patch("mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_edit),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch(
-                "mlx_vlm.load",
-                return_value=(mock_vlm_model, mock_vlm_processor),
-            ),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-            patch("streamlit.cache_resource", lambda f: f),
-        ):
-            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+        with _patched_models(mock_txt2img, mock_edit) as (app, _generate):
+            at = app.run(timeout=10)
             # Run with no prompt and no image must not start inference.
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert not mock_txt2img.generate_image.called
@@ -1526,27 +1366,10 @@ class TestUIWidgets:
             assert "Randomize seed" in labels
 
     def test_infer_failure_is_handled(self):
-        from streamlit.testing.v1 import AppTest
-
         mock_model = _make_mock_model()
         mock_model.generate_image.side_effect = RuntimeError("backend exploded")
-        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_model),
-            patch(
-                "mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_model
-            ),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch(
-                "mlx_vlm.load",
-                return_value=(mock_vlm_model, mock_vlm_processor),
-            ),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-            patch("streamlit.cache_resource", lambda f: f),
-        ):
-            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+        with _patched_models(mock_model, mock_model) as (app, _generate):
+            at = app.run(timeout=10)
             at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             # A generation failure is surfaced, not raised as an uncaught crash.
@@ -1557,14 +1380,18 @@ class TestUIWidgets:
     def test_size_preserved_when_images_cleared(self):
         with _app_test() as app:
             at = app.run(timeout=10)
-            # Loading an editing example sizes the sliders from the image; a
-            # manual width must survive clearing the images (not reset to 1024).
+            # Loading an editing example sizes the sliders from the image
+            # (woman1.webp is 512x768 -> 672x1024).
             at.button(key="edit_example_0").click().run(timeout=10)
-            at.slider(key="width_slider").set_value(512).run(timeout=10)
+            assert at.slider(key="width_slider").value == 672
+            assert at.slider(key="height_slider").value == 1024
+            # A manual width (distinct from any auto value) must survive clearing
+            # the images, not reset to 1024.
+            at.slider(key="width_slider").set_value(320).run(timeout=10)
             next(b for b in at.button if b.label == "Clear example images").click().run(
                 timeout=10
             )
-            assert at.slider(key="width_slider").value == 512
+            assert at.slider(key="width_slider").value == 320
 
     def test_enhanced_prompt_banner_follows_toggle(self):
         with _app_test() as app:
@@ -1576,3 +1403,94 @@ class TestUIWidgets:
             # Turn upsampling on -> the banner appears for the stored prompt.
             at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
             assert any("Enhanced prompt" in i.value for i in at.info)
+
+    def test_successful_run_stores_and_renders_result(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            # The placeholder shows before any run.
+            assert any("appear here" in m.value for m in at.markdown)
+            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            # Disable randomize + fix the seed for a deterministic caption.
+            next(t for t in at.toggle if t.label == "Randomize seed").set_value(
+                False
+            ).run(timeout=10)
+            at.number_input[0].set_value(123).run(timeout=10)
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            assert not at.exception
+            assert at.session_state["result_image"] is not None
+            assert at.session_state["result_seed"] == 123
+            # The result frame renders the image's seed caption, not the placeholder.
+            assert any("Seed: 123" in c.value for c in at.caption)
+            assert not any("appear here" in m.value for m in at.markdown)
+
+    def test_upsampling_run_uses_enhanced_prompt_and_caches(self):
+        mock_model = _make_mock_model()
+        with _patched_models(mock_model, mock_model, vlm_text="ENHANCED a cat") as (
+            app,
+            mock_generate,
+        ):
+            at = app.run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            # The enhanced prompt reaches the model and the banner shows it.
+            assert (
+                mock_model.generate_image.call_args.kwargs["prompt"] == "ENHANCED a cat"
+            )
+            assert any("ENHANCED a cat" in i.value for i in at.info)
+            # A second Run with the same prompt hits the cache (no new VLM call).
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            assert mock_generate.call_count == 1
+
+    def test_enhance_cache_is_bounded(self):
+        mock_model = _make_mock_model()
+        with _patched_models(mock_model, mock_model, vlm_text="ENHANCED") as (
+            app,
+            _generate,
+        ):
+            at = app.run(timeout=10)
+            # Pre-fill the cache to the cap, then enhance a brand-new prompt.
+            at.session_state["_enhance_cache"] = {
+                (f"p{i}", ()): f"e{i}" for i in range(32)
+            }
+            at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
+            at.text_input(key="prompt_input").set_value("fresh prompt").run(timeout=10)
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            cache = at.session_state["_enhance_cache"]
+            assert len(cache) == 32  # stays bounded
+            assert ("p0", ()) not in cache  # oldest entry evicted
+            assert ("fresh prompt", ()) in cache  # newest entry kept
+
+    def test_unreadable_example_images_warn_and_clear(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            # Point example_images at a non-image file -> Image.open raises OSError.
+            at.session_state["example_images"] = [__file__]
+            at.run(timeout=10)
+            assert any(
+                "Could not load the example images" in w.value for w in at.warning
+            )
+            assert "example_images" not in at.session_state
+
+    def test_corrupt_upload_warns(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            at.file_uploader[0].upload("bad.png", b"not a real image").run(timeout=10)
+            assert not at.exception
+            assert any(
+                "Could not load one or more uploaded images" in w.value
+                for w in at.warning
+            )
+
+    def test_changing_prompt_clears_enhanced_banner(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            at.session_state["auto_enhanced_prompt"] = "an enhanced prompt"
+            at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
+            assert any("Enhanced prompt" in i.value for i in at.info)
+            # Editing the prompt invalidates the stored enhanced prompt.
+            at.text_input(key="prompt_input").set_value("a different prompt").run(
+                timeout=10
+            )
+            assert "auto_enhanced_prompt" not in at.session_state
+            assert not any("Enhanced prompt" in i.value for i in at.info)

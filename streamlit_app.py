@@ -1,3 +1,4 @@
+import contextlib
 import random
 from pathlib import Path
 from typing import cast
@@ -15,6 +16,10 @@ APP_TITLE = "FLUX.2 Klein Studio"
 
 MAX_SEED = 2_147_483_647
 MAX_IMAGE_SIZE = 1024
+
+# Fixed height for the idle/generating output frame so it doesn't collapse
+# between states (the result image then sizes to its own content).
+OUTPUT_FRAME_HEIGHT = 420
 
 VLM_MODEL_ID = "mlx-community/SmolVLM-500M-Instruct-bf16"
 
@@ -334,7 +339,10 @@ if __name__ == "__main__":
             )
             if not uploaded_files and _has_example_images:
                 st.caption("Loaded example images:")
-                st.image(st.session_state.example_images, width=80)
+                # Unreadable paths would crash this preview before the load guard
+                # below runs; that guard warns and clears them.
+                with contextlib.suppress(OSError):
+                    st.image(st.session_state.example_images, width=80)
                 st.button("Clear example images", on_click=_clear_example_images)
 
         # Mode (speed/quality). Display labels map back to internal MODE_DEFAULTS
@@ -342,17 +350,13 @@ if __name__ == "__main__":
         # options. required=True forbids deselecting the active segment, so the
         # visible selection always matches the effective mode — without it a
         # deselect returns None, blanks the control, and silently resets the
-        # steps/guidance sliders. The `or` narrows the result back to str for
-        # the LABEL_TO_MODE lookup.
-        mode_label = (
-            st.segmented_control(
-                "Mode",
-                options=MODE_LABEL_LIST,
-                default=MODE_LABEL_LIST[0],
-                key="mode_radio",
-                required=True,
-            )
-            or MODE_LABEL_LIST[0]
+        # steps/guidance sliders, and guarantees a non-None return.
+        mode_label = st.segmented_control(
+            "Mode",
+            options=MODE_LABEL_LIST,
+            default=MODE_LABEL_LIST[0],
+            key="mode_radio",
+            required=True,
         )
         mode = LABEL_TO_MODE[mode_label]
 
@@ -371,7 +375,6 @@ if __name__ == "__main__":
                 _image_key = tuple((f.name, f.file_id) for f in uploaded_files)
             except OSError:
                 st.warning("Could not load one or more uploaded images.")
-                image_list = None
                 _image_key = ()
         elif st.session_state.get("example_images"):
             example_images = st.session_state.example_images
@@ -518,7 +521,7 @@ if __name__ == "__main__":
 
             generation_error = None
             with (
-                result_slot.container(border=True),
+                result_slot.container(border=True, height=OUTPUT_FRAME_HEIGHT),
                 st.status("Generating image…", expanded=True) as status,
             ):
                 progress_bar = st.progress(0, text="Starting…")
@@ -569,7 +572,7 @@ if __name__ == "__main__":
     else:
         with result_slot.container(
             border=True,
-            height=420,
+            height=OUTPUT_FRAME_HEIGHT,
             horizontal_alignment="center",
             vertical_alignment="center",
         ):
