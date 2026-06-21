@@ -30,6 +30,7 @@ MODE_LABELS = {
     "Quality": "Base (50 steps)",
 }
 LABEL_TO_MODE = {label: mode for mode, label in MODE_LABELS.items()}
+MODE_LABEL_LIST = list(MODE_LABELS.values())
 
 EXAMPLE_PROMPTS = [
     "Create a vase on a table in living room, the color of the vase is a gradient of color, starting with #02eb3c color and finishing with #edfa3c. The flowers inside the vase have the color #ff0088",
@@ -276,7 +277,11 @@ def infer(
 
 
 if __name__ == "__main__":
-    st.set_page_config(page_title=APP_TITLE, layout="wide")
+    st.set_page_config(
+        page_title=APP_TITLE,
+        page_icon=":material/auto_awesome:",
+        layout="wide",
+    )
 
     st.title(APP_TITLE)
     st.markdown(
@@ -288,29 +293,37 @@ if __name__ == "__main__":
 
     col_controls, col_output = st.columns([2, 3], gap="large")
 
-    # Reserve output slots in the right column (filled after inference / on rerun)
+    # Reserve the output slot in the right column (filled after inference / on
+    # rerun). Progress and the final image share this one slot so the live
+    # status renders inside the same frame the image lands in.
     with col_output:
-        progress_slot = st.empty()
         result_slot = st.empty()
 
     with col_controls:
-        # Prompt + Run, inline at the top (like the Gradio space)
-        col_prompt, col_run = st.columns([4, 1])
-        with col_prompt:
+        # Prompt + Run, inline at the top (like the Gradio space). A horizontal
+        # container lets the input stretch while the button hugs its icon+label
+        # content, so the Run label never gets crammed into a narrow column and
+        # wraps character-by-character.
+        with st.container(horizontal=True, vertical_alignment="bottom"):
             prompt = st.text_input(
                 "Prompt",
                 placeholder="Enter your prompt",
                 key="prompt_input",
                 label_visibility="collapsed",
+                width="stretch",
             )
-        with col_run:
-            run_clicked = st.button("Run", type="primary", width="stretch")
+            run_clicked = st.button(
+                "Run",
+                type="primary",
+                icon=":material/play_arrow:",
+            )
 
         # Optional input images — uploading any switches to editing automatically.
         # Auto-open once when an example loads, then respect the user's toggle.
         _has_example_images = bool(st.session_state.get("example_images"))
         with st.expander(
             "Input image(s) (optional)",
+            icon=":material/image:",
             expanded=st.session_state.pop("expand_input_once", False),
         ):
             uploaded_files = st.file_uploader(
@@ -324,13 +337,22 @@ if __name__ == "__main__":
                 st.image(st.session_state.example_images, width=80)
                 st.button("Clear example images", on_click=_clear_example_images)
 
-        # Mode (speed/quality). Display labels map back to internal MODE_DEFAULTS keys.
-        mode_label = st.radio(
-            "Mode",
-            options=list(MODE_LABELS.values()),
-            index=0,
-            key="mode_radio",
-            horizontal=True,
+        # Mode (speed/quality). Display labels map back to internal MODE_DEFAULTS
+        # keys. segmented_control is the modern single-select for a few visible
+        # options. required=True forbids deselecting the active segment, so the
+        # visible selection always matches the effective mode — without it a
+        # deselect returns None, blanks the control, and silently resets the
+        # steps/guidance sliders. The `or` narrows the result back to str for
+        # the LABEL_TO_MODE lookup.
+        mode_label = (
+            st.segmented_control(
+                "Mode",
+                options=MODE_LABEL_LIST,
+                default=MODE_LABEL_LIST[0],
+                key="mode_radio",
+                required=True,
+            )
+            or MODE_LABEL_LIST[0]
         )
         mode = LABEL_TO_MODE[mode_label]
 
@@ -344,8 +366,13 @@ if __name__ == "__main__":
         if uploaded_files:
             # A manual upload overrides any loaded example images
             st.session_state.pop("example_images", None)
-            image_list = [Image.open(f) for f in uploaded_files]
-            _image_key = tuple((f.name, f.file_id) for f in uploaded_files)
+            try:
+                image_list = [Image.open(f) for f in uploaded_files]
+                _image_key = tuple((f.name, f.file_id) for f in uploaded_files)
+            except OSError:
+                st.warning("Could not load one or more uploaded images.")
+                image_list = None
+                _image_key = ()
         elif st.session_state.get("example_images"):
             example_images = st.session_state.example_images
             try:
@@ -361,13 +388,12 @@ if __name__ == "__main__":
             st.session_state.prev_images = _image_key
             # An enhanced prompt is tied to its image set; drop it when that changes.
             st.session_state.pop("auto_enhanced_prompt", None)
+            # Match the sliders to a new input image, but leave a manual size
+            # untouched when the image set is cleared.
             if image_list:
                 _w, _h = _dimensions_from_images(image_list)
                 st.session_state.width_slider = _w
                 st.session_state.height_slider = _h
-            else:
-                st.session_state.width_slider = 1024
-                st.session_state.height_slider = 1024
 
         if "last_prompt" not in st.session_state:
             st.session_state.last_prompt = ""
@@ -381,15 +407,15 @@ if __name__ == "__main__":
         st.session_state.setdefault("width_slider", 1024)
         st.session_state.setdefault("height_slider", 1024)
 
-        with st.expander("Advanced Settings", expanded=False):
-            auto_enhance = st.checkbox(
-                "Prompt Upsampling",
+        with st.expander("Advanced settings", icon=":material/tune:", expanded=False):
+            auto_enhance = st.toggle(
+                "Prompt upsampling",
                 value=False,
-                key="auto_enhance_checkbox",
+                key="auto_enhance_toggle",
             )
             st.caption("Automatically enhance the prompt using a VLM")
 
-            randomize_seed = st.checkbox("Randomize seed", value=True)
+            randomize_seed = st.toggle("Randomize seed", value=True)
             seed_val = st.number_input(
                 "Seed",
                 min_value=0,
@@ -464,7 +490,11 @@ if __name__ == "__main__":
             with _col_imgs:
                 st.image(_ex_imgs, width=56)
 
-        if run_clicked:
+        if run_clicked and not final_prompt.strip() and not image_list:
+            # The Run button is always enabled, so guard the empty request here
+            # rather than run the VLM and a full diffusion pass on nothing.
+            st.warning("Enter a prompt or add an input image.")
+        elif run_clicked:
             st.session_state.pop("auto_enhanced_prompt", None)
 
             cache = st.session_state.setdefault("_enhance_cache", {})
@@ -478,44 +508,63 @@ if __name__ == "__main__":
                 )
                 if was_auto_enhanced and cache_key is not None:
                     cache[cache_key] = run_prompt
+                    # Bound the per-session cache so a long editing session
+                    # can't accumulate enhanced prompts without limit.
+                    if len(cache) > 32:
+                        cache.pop(next(iter(cache)))
 
             if was_auto_enhanced:
                 st.session_state.auto_enhanced_prompt = run_prompt
 
-            progress_bar = progress_slot.progress(0, text="Starting...")
+            with (
+                result_slot.container(border=True),
+                st.status("Generating image…", expanded=True) as status,
+            ):
+                progress_bar = st.progress(0, text="Starting…")
 
-            def _update_progress(step, total):
-                progress_bar.progress(step / total, text=f"Step {step}/{total}")
+                def _update_progress(step, total):
+                    progress_bar.progress(step / total, text=f"Step {step}/{total}")
 
-            image, used_seed = infer(
-                run_prompt,
-                seed_val,
-                randomize_seed,
-                width,
-                height,
-                guidance_scale,
-                num_inference_steps,
-                mode=mode,
-                image_list=image_list,
-                progress_callback=_update_progress,
+                try:
+                    image, used_seed = infer(
+                        run_prompt,
+                        seed_val,
+                        randomize_seed,
+                        width,
+                        height,
+                        guidance_scale,
+                        num_inference_steps,
+                        mode=mode,
+                        image_list=image_list,
+                        progress_callback=_update_progress,
+                    )
+                except Exception as exc:
+                    status.update(label="Generation failed", state="error")
+                    st.error(f"Image generation failed: {exc}")
+                else:
+                    status.update(label="Image generated", state="complete")
+                    st.session_state.result_image = image
+                    st.session_state.result_seed = used_seed
+
+        if auto_enhance and "auto_enhanced_prompt" in st.session_state:
+            st.info(
+                f"Enhanced prompt: {st.session_state.auto_enhanced_prompt}",
+                icon=":material/auto_awesome:",
             )
-            progress_slot.empty()
-            st.session_state.result_image = image
-            st.session_state.result_seed = used_seed
 
-        if "auto_enhanced_prompt" in st.session_state:
-            st.info(f"Enhanced prompt: {st.session_state.auto_enhanced_prompt}")
-
-    # Output (right column): result image, or a placeholder canvas
+    # Output (right column): result image, or a placeholder canvas. Both states
+    # share a bordered container so the output frame stays consistent, and the
+    # placeholder uses native theme-aware centering instead of raw-HTML colors.
     if "result_image" in st.session_state:
-        with result_slot.container():
+        with result_slot.container(border=True, horizontal_alignment="center"):
             st.image(st.session_state.result_image, width="stretch")
             if st.session_state.result_seed is not None:
                 st.caption(f"Seed: {st.session_state.result_seed}")
     else:
-        result_slot.markdown(
-            "<div style='display:flex;align-items:center;justify-content:center;"
-            "height:420px;border:1px solid #333;border-radius:8px;color:#888;'>"
-            "🖼️ Your image will appear here</div>",
-            unsafe_allow_html=True,
-        )
+        with result_slot.container(
+            border=True,
+            height=420,
+            horizontal_alignment="center",
+            vertical_alignment="center",
+        ):
+            st.markdown(":gray[🖼️ Your image will appear here]")

@@ -1054,7 +1054,7 @@ class TestStreamlitApp:
             patch("streamlit.cache_resource", lambda f: f),
         ):
             at = AppTest.from_file("streamlit_app.py").run(timeout=10)
-            assert at.radio(key="mode_radio").value == "Distilled (4 steps)"
+            assert at.segmented_control(key="mode_radio").value == "Distilled (4 steps)"
 
     def test_uploader_always_present(self):
         from streamlit.testing.v1 import AppTest
@@ -1152,7 +1152,9 @@ class TestStreamlitApp:
             at = AppTest.from_file("streamlit_app.py").run(timeout=10)
             assert at.slider(key="steps_slider").value == 4
             assert at.slider(key="guidance_scale_slider").value == 1.0
-            at.radio(key="mode_radio").set_value("Base (50 steps)").run(timeout=10)
+            at.segmented_control(key="mode_radio").set_value("Base (50 steps)").run(
+                timeout=10
+            )
             assert at.slider(key="steps_slider").value == 50
             assert at.slider(key="guidance_scale_slider").value == 4.0
 
@@ -1480,3 +1482,36 @@ class TestUIWidgets:
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert mock_edit.generate_image.called
             assert not mock_txt2img.generate_image.called
+
+    def test_empty_run_is_guarded(self):
+        from streamlit.testing.v1 import AppTest
+
+        mock_txt2img = _make_mock_model()
+        mock_edit = _make_mock_model()
+        mock_vlm_model, mock_vlm_processor, mock_vlm_config = _make_mock_vlm()
+        with (
+            patch("mflux.models.flux2.variants.Flux2Klein", return_value=mock_txt2img),
+            patch("mflux.models.flux2.variants.Flux2KleinEdit", return_value=mock_edit),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch(
+                "mlx_vlm.load",
+                return_value=(mock_vlm_model, mock_vlm_processor),
+            ),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
+            patch("streamlit.cache_resource", lambda f: f),
+        ):
+            at = AppTest.from_file("streamlit_app.py").run(timeout=10)
+            # Run with no prompt and no image must not start inference.
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            assert not mock_txt2img.generate_image.called
+            assert not mock_edit.generate_image.called
+            assert any("Enter a prompt" in w.value for w in at.warning)
+
+    def test_mode_control_is_required(self):
+        # required=True keeps a selection; a deselect would blank the control and
+        # silently reset the steps/guidance sliders.
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            assert at.segmented_control(key="mode_radio").proto.required is True

@@ -10,10 +10,11 @@ Generate and edit images with the Black Forest Labs [FLUX.2 Klein 4B](https://hu
 - Two-column studio layout: controls on the left, generated image on the right
 - Multi-image upload for editing and compositing workflows
 - Auto-dimension: width/height sliders adjust to match the first input image's aspect ratio
-- Optional vision-aware prompt upsampling via SmolVLM-500M-Instruct — a toggle in Advanced Settings; the VLM can see uploaded images when enhancing edit prompts (loaded on first use)
+- Optional vision-aware prompt upsampling via SmolVLM-500M-Instruct — a toggle in Advanced settings; the VLM can see uploaded images when enhancing edit prompts (loaded on first use)
 - Clickable examples — text-to-image prompts plus an editing example with bundled input images
-- Per-step progress bar during inference
-- Configurable seed, dimensions, guidance scale, and inference steps in Advanced Settings
+- Per-step progress bar shown inside the output frame during inference
+- Configurable seed, dimensions, guidance scale, and inference steps in Advanced settings
+- Native light/dark theme via `.streamlit/config.toml` (no custom CSS)
 
 ## Requirements
 
