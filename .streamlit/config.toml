@@ -1,0 +1,22 @@
+# Theme for FLUX.2 Klein Studio. Native theming only — set colors here, not via
+# CSS. Both light and dark are defined so the in-app appearance switcher stays
+# available; shared options (font, radius) live in [theme] and apply to both.
+
+[theme]
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+baseRadius = "8px"
+linkUnderline = false
+
+[theme.light]
+primaryColor = "#6750F5"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f4f4f8"
+textColor = "#1b1b29"
+borderColor = "#e4e4ee"
+
+[theme.dark]
+primaryColor = "#9F8BFF"
+backgroundColor = "#0f0f15"
+secondaryBackgroundColor = "#1a1a24"
+textColor = "#e8e8f0"
+borderColor = "#2b2b3a"
