@@ -1035,6 +1035,33 @@ class TestStreamlitApp:
             importlib.reload(streamlit_app)
             assert hasattr(streamlit_app._get_vlm, "clear")
 
+    def test_getters_have_loading_spinner_labels(self):
+        """All five cached getters label their long first load via show_spinner."""
+        captured = []
+
+        def recording_cache_resource(func=None, **kwargs):
+            if func is None:
+                captured.append(kwargs)
+                return lambda f: f
+            return func
+
+        with (
+            patch("mflux.models.flux2.variants.Flux2Klein"),
+            patch("mflux.models.flux2.variants.Flux2KleinEdit"),
+            patch("mflux.models.common.config.ModelConfig"),
+            patch("mlx_vlm.load"),
+            patch("mlx_vlm.generate"),
+            patch("mlx_vlm.prompt_utils.apply_chat_template"),
+            patch("mlx_vlm.utils.load_config"),
+            patch("streamlit.cache_resource", recording_cache_resource),
+        ):
+            import streamlit_app
+
+            importlib.reload(streamlit_app)
+
+        assert len(captured) == 5
+        assert all(kwargs["show_spinner"].startswith("Loading") for kwargs in captured)
+
     def test_ui_not_executed_on_import(self):
         mock_model = _make_mock_model()
         with (
@@ -1065,6 +1092,15 @@ class TestStreamlitApp:
             assert len(run_buttons) == 1
             # Editing is implicit now, so Run is never disabled
             assert run_buttons[0].disabled is False
+
+    def test_run_is_form_submit_button(self):
+        # Run submits the prompt form, so pressing Enter in the prompt box
+        # triggers generation (the form's enter_to_submit default).
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            run = next(b for b in at.button if b.label == "Run")
+            assert run.proto.is_form_submitter
+            assert run.proto.form_id
 
     def test_prompt_uses_enter_prompt_placeholder(self):
         with _app_test() as app:
@@ -1361,7 +1397,8 @@ class TestUIWidgets:
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert not mock_txt2img.generate_image.called
             assert not mock_edit.generate_image.called
-            assert any("Enter a prompt" in w.value for w in at.warning)
+            guard = next(w for w in at.warning if "Enter a prompt" in w.value)
+            assert guard.icon == ":material/warning:"
 
     def test_mode_control_is_required(self):
         # required=True keeps a selection; a deselect would blank the control and
@@ -1388,7 +1425,8 @@ class TestUIWidgets:
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             # A generation failure is surfaced, not raised as an uncaught crash.
             assert not at.exception
-            assert any("failed" in e.value.lower() for e in at.error)
+            failure = next(e for e in at.error if "failed" in e.value.lower())
+            assert failure.icon == ":material/error:"
             assert "result_image" not in at.session_state
 
     def test_size_preserved_when_images_cleared(self):
@@ -1417,6 +1455,15 @@ class TestUIWidgets:
             # Turn upsampling on -> the banner appears for the stored prompt.
             at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
             assert any("Enhanced prompt" in i.value for i in at.info)
+
+    def test_placeholder_uses_material_icon(self):
+        # The idle placeholder is theme-aware end to end: a Material Symbol
+        # inside :gray[...] (an emoji would keep its fixed platform colors).
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            placeholder = next(m for m in at.markdown if "appear here" in m.value)
+            assert ":material/image:" in placeholder.value
+            assert "🖼" not in placeholder.value
 
     def test_successful_run_stores_and_renders_result(self):
         with _app_test() as app:
