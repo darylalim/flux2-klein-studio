@@ -8,11 +8,12 @@ Generate and edit images with the Black Forest Labs [FLUX.2 Klein 4B](https://hu
 - Two speed/quality modes: Distilled (4 steps) and Base (50 steps)
 - Native Apple Silicon performance via MLX — inference runs on MLX, not PyTorch
 - Two-column studio layout: controls on the left, generated image on the right
+- Enter to run — the prompt row is a borderless form, so pressing Enter submits the run
 - Multi-image upload for editing and compositing workflows
 - Auto-dimension: width/height sliders adjust to match the first input image's aspect ratio
 - Optional vision-aware prompt upsampling via SmolVLM-500M-Instruct — a toggle in Advanced settings; the VLM can see uploaded images when enhancing edit prompts (loaded on first use)
-- Clickable examples — text-to-image prompts plus an editing example with bundled input images
-- Per-step progress bar shown inside the output frame during inference
+- Clickable examples — text-to-image prompts plus an editing example with bundled input images (loading one replaces any manual upload)
+- Per-step progress bar shown inside the output frame during inference, with labeled spinners for first-time model loads and prompt enhancement
 - Configurable seed, dimensions, guidance scale, and inference steps in Advanced settings
 - Native light/dark theme via `.streamlit/config.toml` (no custom CSS)
 - Graceful failure handling — empty runs are blocked; unreadable uploads and generation errors surface inline instead of crashing the app
