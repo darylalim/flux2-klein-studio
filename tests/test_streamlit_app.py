@@ -71,7 +71,7 @@ def _load_theme():
 
 
 def _relative_luminance(hex_color):
-    """WCAG relative luminance of a #rrggbb colour."""
+    """WCAG relative luminance of a #rrggbb color."""
     h = hex_color.lstrip("#")
     srgb = [int(h[i : i + 2], 16) / 255 for i in (0, 2, 4)]
     linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in srgb]
@@ -80,7 +80,7 @@ def _relative_luminance(hex_color):
 
 
 def _contrast_ratio(fg, bg):
-    """WCAG contrast ratio between two #rrggbb colours (>= 1.0)."""
+    """WCAG contrast ratio between two #rrggbb colors (>= 1.0)."""
     lo, hi = sorted((_relative_luminance(fg), _relative_luminance(bg)))
     return (hi + 0.05) / (lo + 0.05)
 
@@ -173,7 +173,7 @@ class TestThemeConfig:
     """Accessibility contract for .streamlit/config.toml.
 
     Theming is native (no CSS), so this palette *is* the UI's contrast story.
-    These tests lock it: a future colour tweak that drops link, body-text, or
+    These tests lock it: a future color tweak that drops link, body-text, or
     button contrast below WCAG AA fails in CI instead of shipping an unreadable
     UI. (The dark linkColor override in particular exists only for contrast.)
     """
@@ -193,20 +193,29 @@ class TestThemeConfig:
         assert theme["dark"]["linkColor"] != theme["dark"]["primaryColor"]
 
     def test_link_contrast_meets_wcag_aa(self):
-        # Links inherit primaryColor unless linkColor overrides it.
+        # Links inherit primaryColor unless linkColor overrides it, and can land
+        # on either the main or the secondary/widget background — lock both.
         theme = _load_theme()
         for mode in ("light", "dark"):
             variant = theme[mode]
             link = variant.get("linkColor", variant["primaryColor"])
-            ratio = _contrast_ratio(link, variant["backgroundColor"])
-            assert ratio >= _WCAG_AA_NORMAL, f"{mode} link {link}: {ratio:.2f}:1"
+            for surface in ("backgroundColor", "secondaryBackgroundColor"):
+                ratio = _contrast_ratio(link, variant[surface])
+                assert ratio >= _WCAG_AA_NORMAL, (
+                    f"{mode} link {link} on {surface}: {ratio:.2f}:1"
+                )
 
     def test_body_text_contrast_meets_wcag_aa(self):
+        # Text renders on both the main background and the secondary/widget
+        # surface (captions, st.info, st.status, widget fills), so lock both.
         theme = _load_theme()
         for mode in ("light", "dark"):
             variant = theme[mode]
-            ratio = _contrast_ratio(variant["textColor"], variant["backgroundColor"])
-            assert ratio >= _WCAG_AA_NORMAL, f"{mode} text: {ratio:.2f}:1"
+            for surface in ("backgroundColor", "secondaryBackgroundColor"):
+                ratio = _contrast_ratio(variant["textColor"], variant[surface])
+                assert ratio >= _WCAG_AA_NORMAL, (
+                    f"{mode} text on {surface}: {ratio:.2f}:1"
+                )
 
     def test_primary_button_text_contrast_meets_wcag_aa(self):
         # Streamlit renders primary-button labels white on primaryColor.
