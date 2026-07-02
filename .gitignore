@@ -8,7 +8,6 @@ __pycache__/
 # Tooling caches
 .pytest_cache/
 .ruff_cache/
-.superpowers/
 
 # Streamlit (config.toml is tracked; never commit secrets)
 .streamlit/secrets.toml
