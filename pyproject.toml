@@ -1,7 +1,7 @@
 [project]
 name = "flux2-klein-studio"
 version = "0.6.1"
-description = "Generate and edit images with the Black Forest Labs FLUX.2 Klein 4B model on Apple Silicon with MLX."
+description = "Streamlit application for generating and editing images using Black Forest Labs FLUX.2 Klein on Apple Silicon with MLX."
 requires-python = ">=3.12"
 dependencies = [
     "mflux",

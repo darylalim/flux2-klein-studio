@@ -1,6 +1,6 @@
 # FLUX.2 Klein Studio
 
-Generate and edit images with the Black Forest Labs [FLUX.2 Klein 4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) model on Apple Silicon with MLX.
+Streamlit application for generating and editing images using Black Forest Labs [FLUX.2 Klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) on Apple Silicon with MLX.
 
 ## Features
 

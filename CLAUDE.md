@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FLUX.2 Klein Studio is a single-file Streamlit web app that generates and edits images with the Black Forest Labs [FLUX.2 Klein 4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) model on Apple Silicon with MLX. Built on [mflux](https://github.com/filipstrand/mflux) (diffusion) and [mlx-vlm](https://github.com/Blaizzy/mlx-vlm) (VLM). Unified generation and editing: text-to-image by default, switching to multi-image editing automatically when input images are supplied. Two speed/quality modes, shown in the UI as Distilled (4 steps) and Base (50 steps) (internally `Fast`/`Quality`). Optional vision-aware prompt upsampling via [SmolVLM-500M-Instruct](https://huggingface.co/mlx-community/SmolVLM-500M-Instruct-bf16) — the VLM can see uploaded images when enhancing editing prompts.
+FLUX.2 Klein Studio is a single-file Streamlit application for generating and editing images using Black Forest Labs [FLUX.2 Klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) on Apple Silicon with MLX. Built on [mflux](https://github.com/filipstrand/mflux) (diffusion) and [mlx-vlm](https://github.com/Blaizzy/mlx-vlm) (VLM). Unified generation and editing: text-to-image by default, switching to multi-image editing automatically when input images are supplied. Two speed/quality modes, shown in the UI as Distilled (4 steps) and Base (50 steps) (internally `Fast`/`Quality`). Optional vision-aware prompt upsampling via [SmolVLM-500M-Instruct](https://huggingface.co/mlx-community/SmolVLM-500M-Instruct-bf16) — the VLM can see uploaded images when enhancing editing prompts.
 
 ## Setup
 
