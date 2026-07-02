@@ -59,12 +59,12 @@ EDIT_EXAMPLES = [
 ]
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading FLUX.2 Klein (distilled)…")
 def _get_model_distilled():
     return Flux2Klein(model_config=ModelConfig.flux2_klein_4b())
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading FLUX.2 Klein (base)…")
 def _get_model_base():
     return Flux2Klein(model_config=ModelConfig.flux2_klein_base_4b())
 
@@ -75,12 +75,12 @@ MODELS = {
 }
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading FLUX.2 Klein Edit (distilled)…")
 def _get_edit_model_distilled():
     return Flux2KleinEdit(model_config=ModelConfig.flux2_klein_4b())
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading FLUX.2 Klein Edit (base)…")
 def _get_edit_model_base():
     return Flux2KleinEdit(model_config=ModelConfig.flux2_klein_base_4b())
 
@@ -91,7 +91,7 @@ EDIT_MODELS = {
 }
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading SmolVLM prompt enhancer…")
 def _get_vlm():
     model, processor = load_vlm(VLM_MODEL_ID)
     config = load_config(VLM_MODEL_ID)
@@ -162,7 +162,10 @@ def upsample_prompt(prompt, image_list: list | None = None):
         enhanced = result.text.replace("<end_of_utterance>", "").strip()
         return enhanced or prompt
     except Exception:
-        st.warning("Prompt enhancement failed. Using original prompt.")
+        st.warning(
+            "Prompt enhancement failed. Using original prompt.",
+            icon=":material/warning:",
+        )
         return prompt
 
 
@@ -191,8 +194,12 @@ def _load_edit_example(prompt, images):
     """Load an editing example: its prompt plus its bundled input images."""
     st.session_state.prompt_input = prompt
     st.session_state.example_images = list(images)
-    # Reveal the input panel once (not on every later rerun — see the expander).
-    st.session_state.expand_input_once = True
+    # Cycle the uploader key so a fresh, empty uploader renders — otherwise a
+    # stale manual upload survives the rerun and silently overrides the example.
+    st.session_state.uploader_nonce = st.session_state.get("uploader_nonce", 0) + 1
+    # Open the input panel via the keyed expander's state; later user toggles
+    # are respected because the widget syncs this key on every change.
+    st.session_state.input_expander = True
 
 
 def _clear_example_images():
@@ -305,11 +312,15 @@ if __name__ == "__main__":
         result_slot = st.empty()
 
     with col_controls:
-        # Prompt + Run, inline at the top (like the Gradio space). A horizontal
+        # Prompt + Run, inline at the top (like the Gradio space). A borderless
+        # form makes Enter in the prompt box submit the run; the horizontal
         # container lets the input stretch while the button hugs its icon+label
         # content, so the Run label never gets crammed into a narrow column and
         # wraps character-by-character.
-        with st.container(horizontal=True, vertical_alignment="bottom"):
+        with (
+            st.form("prompt_form", border=False),
+            st.container(horizontal=True, vertical_alignment="bottom"),
+        ):
             prompt = st.text_input(
                 "Prompt",
                 placeholder="Enter your prompt",
@@ -317,25 +328,29 @@ if __name__ == "__main__":
                 label_visibility="collapsed",
                 width="stretch",
             )
-            run_clicked = st.button(
+            run_clicked = st.form_submit_button(
                 "Run",
                 type="primary",
                 icon=":material/play_arrow:",
             )
 
         # Optional input images — uploading any switches to editing automatically.
-        # Auto-open once when an example loads, then respect the user's toggle.
+        # The keyed expander mirrors its open/closed state in session state, so
+        # loading an example opens it programmatically (see _load_edit_example)
+        # while the user's own toggling is respected on later reruns.
         _has_example_images = bool(st.session_state.get("example_images"))
         with st.expander(
             "Input image(s) (optional)",
             icon=":material/image:",
-            expanded=st.session_state.pop("expand_input_once", False),
+            key="input_expander",
+            on_change="rerun",
         ):
             uploaded_files = st.file_uploader(
                 "Input images",
                 type=["jpg", "jpeg", "png", "webp"],
                 accept_multiple_files=True,
                 label_visibility="collapsed",
+                key=f"uploader_{st.session_state.get('uploader_nonce', 0)}",
             )
             if not uploaded_files and _has_example_images:
                 st.caption("Loaded example images:")
@@ -374,7 +389,10 @@ if __name__ == "__main__":
                 image_list = [Image.open(f) for f in uploaded_files]
                 _image_key = tuple((f.name, f.file_id) for f in uploaded_files)
             except OSError:
-                st.warning("Could not load one or more uploaded images.")
+                st.warning(
+                    "Could not load one or more uploaded images.",
+                    icon=":material/warning:",
+                )
                 _image_key = ()
         elif st.session_state.get("example_images"):
             example_images = st.session_state.example_images
@@ -382,7 +400,10 @@ if __name__ == "__main__":
                 image_list = [Image.open(p) for p in example_images]
                 _image_key = tuple(example_images)
             except OSError:
-                st.warning("Could not load the example images.")
+                st.warning(
+                    "Could not load the example images.",
+                    icon=":material/warning:",
+                )
                 st.session_state.pop("example_images", None)
                 _image_key = ()
         else:
@@ -401,6 +422,9 @@ if __name__ == "__main__":
         if "last_prompt" not in st.session_state:
             st.session_state.last_prompt = ""
 
+        # The prompt lives in a form, so typed edits only arrive here on
+        # submit (where the Run branch drops the banner anyway); this check
+        # catches prompt changes pushed via session state by example clicks.
         if prompt != st.session_state.last_prompt:
             st.session_state.last_prompt = prompt
             st.session_state.pop("auto_enhanced_prompt", None)
@@ -480,7 +504,7 @@ if __name__ == "__main__":
 
         st.markdown("**Editing examples**")
         for _i, (_ex_prompt, _ex_imgs) in enumerate(EDIT_EXAMPLES):
-            _col_prompt, _col_imgs = st.columns([3, 2])
+            _col_prompt, _col_imgs = st.columns([3, 2], vertical_alignment="center")
             with _col_prompt:
                 st.button(
                     _truncate(_ex_prompt),
@@ -496,7 +520,10 @@ if __name__ == "__main__":
         if run_clicked and not final_prompt.strip() and not image_list:
             # The Run button is always enabled, so guard the empty request here
             # rather than run the VLM and a full diffusion pass on nothing.
-            st.warning("Enter a prompt or add an input image.")
+            st.warning(
+                "Enter a prompt or add an input image.",
+                icon=":material/warning:",
+            )
         elif run_clicked:
             st.session_state.pop("auto_enhanced_prompt", None)
 
@@ -506,9 +533,18 @@ if __name__ == "__main__":
             if cache_key is not None and cache_key in cache:
                 run_prompt, was_auto_enhanced = cache[cache_key], True
             else:
-                run_prompt, was_auto_enhanced = _resolve_prompt(
-                    final_prompt, image_list, auto_enhance
+                # The VLM call takes seconds (plus a first-use model load), and
+                # it runs before the status frame opens — show a spinner so an
+                # enhanced Run isn't silent. Skipped when upsampling is off.
+                _enhance_ctx = (
+                    st.spinner("Enhancing prompt…")
+                    if auto_enhance
+                    else contextlib.nullcontext()
                 )
+                with _enhance_ctx:
+                    run_prompt, was_auto_enhanced = _resolve_prompt(
+                        final_prompt, image_list, auto_enhance
+                    )
                 if was_auto_enhanced and cache_key is not None:
                     cache[cache_key] = run_prompt
                     # Bound the per-session cache so a long editing session
@@ -553,7 +589,10 @@ if __name__ == "__main__":
             # Surface a failure in the controls column, where it survives the
             # bottom block re-rendering result_slot (which overwrites the status).
             if generation_error is not None:
-                st.error(f"Image generation failed: {generation_error}")
+                st.error(
+                    f"Image generation failed: {generation_error}",
+                    icon=":material/error:",
+                )
 
         if auto_enhance and "auto_enhanced_prompt" in st.session_state:
             st.info(
@@ -576,4 +615,4 @@ if __name__ == "__main__":
             horizontal_alignment="center",
             vertical_alignment="center",
         ):
-            st.markdown(":gray[🖼️ Your image will appear here]")
+            st.markdown(":gray[:material/image: Your image will appear here]")

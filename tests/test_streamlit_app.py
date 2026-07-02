@@ -1,5 +1,6 @@
 import contextlib
 import importlib
+import io
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -36,6 +37,18 @@ class _MockGenerationResult:
         self.text = text
 
 
+def _passthrough_cache_resource(func=None, **_kwargs):
+    """Stand-in for st.cache_resource supporting bare and parameterized forms.
+
+    The app uses ``@st.cache_resource(show_spinner="…")``, which calls the
+    decorator factory with kwargs first; a plain ``lambda f: f`` would choke
+    on that form.
+    """
+    if func is None:
+        return lambda f: f
+    return func
+
+
 def _make_mock_vlm():
     """Create a mock VLM (model, processor, config) triple."""
     mock_processor = MagicMock()
@@ -59,7 +72,7 @@ def _reload_app(mock_model, *, mock_edit_model=None, mock_vlm=None):
         patch("mlx_vlm.generate") as _mock_generate,
         patch("mlx_vlm.prompt_utils.apply_chat_template") as _mock_chat,
         patch("mlx_vlm.utils.load_config") as mock_load_config,
-        patch("streamlit.cache_resource", lambda f: f),
+        patch("streamlit.cache_resource", _passthrough_cache_resource),
     ):
         if mock_vlm is not None:
             mock_vlm_model, mock_vlm_processor, mock_vlm_config = mock_vlm
@@ -819,7 +832,8 @@ class TestUpsamplePrompt:
             result = streamlit_app.upsample_prompt("a cat")
             assert result == "a cat"
             mock_st.warning.assert_called_once_with(
-                "Prompt enhancement failed. Using original prompt."
+                "Prompt enhancement failed. Using original prompt.",
+                icon=":material/warning:",
             )
 
     def test_empty_image_list_uses_text_only_path(self):
@@ -1125,7 +1139,7 @@ def _patched_models(txt2img, edit, *, vlm_text=None):
         patch("mlx_vlm.generate", return_value=vlm_result) as vlm_generate,
         patch("mlx_vlm.prompt_utils.apply_chat_template"),
         patch("mlx_vlm.utils.load_config", return_value=mock_vlm_config),
-        patch("streamlit.cache_resource", lambda f: f),
+        patch("streamlit.cache_resource", _passthrough_cache_resource),
     ):
         from streamlit.testing.v1 import AppTest
 
@@ -1482,15 +1496,38 @@ class TestUIWidgets:
                 for w in at.warning
             )
 
+    def test_edit_example_overrides_stale_manual_upload(self):
+        """Loading an editing example must not be undone by an earlier upload.
+
+        The uploader retains files across reruns, so without the nonce-cycled
+        key the manual-upload override would pop the example images on the
+        same rerun the example callback set them.
+        """
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            buf = io.BytesIO()
+            Image.new("RGB", (8, 8)).save(buf, format="PNG")
+            at.file_uploader[0].upload("mine.png", buf.getvalue()).run(timeout=10)
+            at.button(key="edit_example_0").click().run(timeout=10)
+            assert not at.exception
+            # A fresh (renamed) uploader renders empty, so the example survives…
+            assert len(at.session_state["example_images"]) == 3
+            # …and the input panel was opened via the keyed expander state.
+            assert at.session_state["input_expander"] is True
+
     def test_changing_prompt_clears_enhanced_banner(self):
+        """A prompt change must invalidate the stored enhanced prompt.
+
+        The prompt box lives in a form, so typed edits only reach the app on
+        submit (AppTest would not model that gating anyway); the production
+        path that changes the prompt outside a submit is an example click,
+        which pushes ``prompt_input`` via session state.
+        """
         with _app_test() as app:
             at = app.run(timeout=10)
             at.session_state["auto_enhanced_prompt"] = "an enhanced prompt"
             at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
             assert any("Enhanced prompt" in i.value for i in at.info)
-            # Editing the prompt invalidates the stored enhanced prompt.
-            at.text_input(key="prompt_input").set_value("a different prompt").run(
-                timeout=10
-            )
+            at.button(key="example_2").click().run(timeout=10)
             assert "auto_enhanced_prompt" not in at.session_state
             assert not any("Enhanced prompt" in i.value for i in at.info)
