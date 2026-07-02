@@ -288,6 +288,11 @@ def infer(
     return image.image, seed
 
 
+# The UI lives under this guard as a testability seam, not ceremony. Plain
+# `import streamlit_app` (the unit tests) leaves __name__ == "streamlit_app", so
+# the UI is skipped and the helpers above import without a Streamlit runtime;
+# AppTest.from_file() and `streamlit run` exec the module as "__main__", so the
+# UI runs. Dropping the guard would fire the whole UI on every plain import.
 if __name__ == "__main__":
     st.set_page_config(
         page_title=APP_TITLE,
@@ -296,12 +301,6 @@ if __name__ == "__main__":
     )
 
     st.title(APP_TITLE)
-    st.markdown(
-        "FLUX.2 [Klein] is a fast, unified image generation and editing model "
-        "designed for fast inference. "
-        "[[model]](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) · "
-        "[[blog]](https://bfl.ai/blog/flux2-klein-towards-interactive-visual-intelligence)"
-    )
 
     col_controls, col_output = st.columns([2, 3], gap="large")
 
@@ -375,6 +374,10 @@ if __name__ == "__main__":
         )
         mode = LABEL_TO_MODE[mode_label]
 
+        # Seed the mode's default steps/guidance into the slider keys. This writes
+        # widget-backed keys, so it must stay ABOVE the Advanced settings expander
+        # where those sliders are created — assigning a widget key after the widget
+        # renders raises StreamlitAPIException.
         if mode != st.session_state.get("prev_mode"):
             st.session_state.prev_mode = mode
             defaults = MODE_DEFAULTS[mode]
@@ -413,7 +416,9 @@ if __name__ == "__main__":
             # An enhanced prompt is tied to its image set; drop it when that changes.
             st.session_state.pop("auto_enhanced_prompt", None)
             # Match the sliders to a new input image, but leave a manual size
-            # untouched when the image set is cleared.
+            # untouched when the image set is cleared. Writes the width/height
+            # slider keys, so (like the mode block) it must stay above the
+            # Advanced settings expander that instantiates those sliders.
             if image_list:
                 _w, _h = _dimensions_from_images(image_list)
                 st.session_state.width_slider = _w
@@ -434,6 +439,15 @@ if __name__ == "__main__":
         st.session_state.setdefault("width_slider", 1024)
         st.session_state.setdefault("height_slider", 1024)
 
+        # The four sliders below are instantiated on every run — two invariants
+        # to preserve:
+        #  1. Keys seeded above (guidance/steps on mode change, width/height on
+        #     image change) are written before this line, so they land before the
+        #     widgets exist. Keep those blocks above this expander.
+        #  2. Do NOT gate this body with on_change="rerun" + `.open` to skip it
+        #     when collapsed: the slider return values feed infer() below, so they
+        #     must be assigned every run — a collapsed, un-run body leaves them
+        #     unset (NameError at generate time).
         with st.expander("Advanced settings", icon=":material/tune:", expanded=False):
             auto_enhance = st.toggle(
                 "Prompt upsampling",

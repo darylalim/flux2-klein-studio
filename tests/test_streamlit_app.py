@@ -1,6 +1,7 @@
 import contextlib
 import importlib
 import io
+import tomllib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -55,6 +56,33 @@ def _make_mock_vlm():
     mock_model = MagicMock()
     mock_config = MagicMock()
     return mock_model, mock_processor, mock_config
+
+
+_CONFIG_PATH = Path(__file__).resolve().parent.parent / ".streamlit" / "config.toml"
+
+# WCAG 2.1 AA minimum contrast ratio for normal-size text (links, body, buttons).
+_WCAG_AA_NORMAL = 4.5
+
+
+def _load_theme():
+    """Return the [theme] table from the app's .streamlit/config.toml."""
+    with _CONFIG_PATH.open("rb") as fh:
+        return tomllib.load(fh)["theme"]
+
+
+def _relative_luminance(hex_color):
+    """WCAG relative luminance of a #rrggbb colour."""
+    h = hex_color.lstrip("#")
+    srgb = [int(h[i : i + 2], 16) / 255 for i in (0, 2, 4)]
+    linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in srgb]
+    r, g, b = linear
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast_ratio(fg, bg):
+    """WCAG contrast ratio between two #rrggbb colours (>= 1.0)."""
+    lo, hi = sorted((_relative_luminance(fg), _relative_luminance(bg)))
+    return (hi + 0.05) / (lo + 0.05)
 
 
 def _reload_app(mock_model, *, mock_edit_model=None, mock_vlm=None):
@@ -139,6 +167,53 @@ class TestConstants:
         import streamlit_app
 
         assert set(streamlit_app.MODE_DEFAULTS) == set(streamlit_app.EDIT_MODELS)
+
+
+class TestThemeConfig:
+    """Accessibility contract for .streamlit/config.toml.
+
+    Theming is native (no CSS), so this palette *is* the UI's contrast story.
+    These tests lock it: a future colour tweak that drops link, body-text, or
+    button contrast below WCAG AA fails in CI instead of shipping an unreadable
+    UI. (The dark linkColor override in particular exists only for contrast.)
+    """
+
+    def test_light_and_dark_variants_defined(self):
+        # Both must exist or the in-app light/dark appearance switcher disappears.
+        theme = _load_theme()
+        assert "light" in theme
+        assert "dark" in theme
+
+    def test_dark_link_color_overrides_primary(self):
+        # Dark links must NOT inherit primaryColor: #7457FF on the dark
+        # background is 4.14:1 (under AA). The override exists to fix that, so a
+        # revert to the inherited default should fail here.
+        theme = _load_theme()
+        assert "linkColor" in theme["dark"]
+        assert theme["dark"]["linkColor"] != theme["dark"]["primaryColor"]
+
+    def test_link_contrast_meets_wcag_aa(self):
+        # Links inherit primaryColor unless linkColor overrides it.
+        theme = _load_theme()
+        for mode in ("light", "dark"):
+            variant = theme[mode]
+            link = variant.get("linkColor", variant["primaryColor"])
+            ratio = _contrast_ratio(link, variant["backgroundColor"])
+            assert ratio >= _WCAG_AA_NORMAL, f"{mode} link {link}: {ratio:.2f}:1"
+
+    def test_body_text_contrast_meets_wcag_aa(self):
+        theme = _load_theme()
+        for mode in ("light", "dark"):
+            variant = theme[mode]
+            ratio = _contrast_ratio(variant["textColor"], variant["backgroundColor"])
+            assert ratio >= _WCAG_AA_NORMAL, f"{mode} text: {ratio:.2f}:1"
+
+    def test_primary_button_text_contrast_meets_wcag_aa(self):
+        # Streamlit renders primary-button labels white on primaryColor.
+        theme = _load_theme()
+        for mode in ("light", "dark"):
+            ratio = _contrast_ratio("#ffffff", theme[mode]["primaryColor"])
+            assert ratio >= _WCAG_AA_NORMAL, f"{mode} button: {ratio:.2f}:1"
 
 
 class TestModelLoading:
@@ -1063,6 +1138,9 @@ class TestStreamlitApp:
         assert all(kwargs["show_spinner"].startswith("Loading") for kwargs in captured)
 
     def test_ui_not_executed_on_import(self):
+        """Guards the ``if __name__ == "__main__"`` testability seam: a plain
+        import must not render the UI, so these unit tests can import the module
+        directly without a Streamlit script context."""
         mock_model = _make_mock_model()
         with (
             patch("streamlit.markdown") as mock_markdown,
@@ -1117,6 +1195,20 @@ class TestStreamlitApp:
             )
             assert at.slider(key="steps_slider").value == 50
             assert at.slider(key="guidance_scale_slider").value == 4.0
+
+    def test_advanced_sliders_render_while_collapsed(self):
+        # The Advanced settings expander is collapsed by default, yet its four
+        # sliders must still instantiate every run: their values feed infer(),
+        # so gating the expander body on it being open would leave them unset.
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            for key in (
+                "width_slider",
+                "height_slider",
+                "steps_slider",
+                "guidance_scale_slider",
+            ):
+                assert at.slider(key=key).value is not None
 
     def test_example_buttons_render(self):
         with _app_test() as app:

@@ -15,7 +15,7 @@ Generate and edit images with the Black Forest Labs [FLUX.2 Klein 4B](https://hu
 - Clickable examples — text-to-image prompts plus an editing example with bundled input images (loading one replaces any manual upload)
 - Per-step progress bar shown inside the output frame during inference, with labeled spinners for first-time model loads and prompt enhancement
 - Configurable seed, dimensions, guidance scale, and inference steps in Advanced settings
-- Native light/dark theme via `.streamlit/config.toml` (no custom CSS)
+- Native light/dark theme via `.streamlit/config.toml` (no custom CSS), with WCAG AA-compliant link contrast in both modes
 - Graceful failure handling — empty runs are blocked; unreadable uploads and generation errors surface inline instead of crashing the app
 
 ## Requirements
