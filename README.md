@@ -51,3 +51,15 @@ uv run pytest         # Unit tests
 ### Claude Code hooks
 
 This repo ships opt-in [Claude Code](https://claude.com/claude-code) hooks (in `.claude/`) that run the checks above automatically as you edit: format + lint-fix (`ruff`) and type-check (`ty`) on each Python change, the test suite (`pytest`) once at the end of a turn that touched app/test/theme code, and a guard that blocks `Edit`/`Write` to `.env` and `uv.lock` (it does not intercept `Bash` writes, and fails closed if `jq` is missing). They require [`jq`](https://jqlang.github.io/jq/) and activate on session start (run `/hooks` to review). `tests/test_hooks.py` covers their behavior; `.claude/settings.local.json` (personal overrides) is gitignored.
+
+## License
+
+This project is released under the [MIT License](LICENSE).
+
+It builds on components with their own licenses, all permissive:
+
+- **FLUX.2 Klein 4B** (distilled and base) and **SmolVLM-500M-Instruct** — [Apache-2.0](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) (open weights, commercial use permitted). The 9B FLUX.2 Klein variants carry a non-commercial license and are **not** used here.
+- **mflux** and **mlx-vlm** — MIT
+- **Streamlit** — Apache-2.0
+
+Model weights are downloaded at runtime from Hugging Face rather than bundled in this repository.
