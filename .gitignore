@@ -12,5 +12,8 @@ __pycache__/
 # Streamlit (config.toml is tracked; never commit secrets)
 .streamlit/secrets.toml
 
+# Claude Code (settings.json + hooks/ are tracked; personal overrides are not)
+.claude/settings.local.json
+
 # macOS
 .DS_Store
