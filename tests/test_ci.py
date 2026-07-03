@@ -79,12 +79,17 @@ class TestCIWorkflow:
         # macOS or the module can't load. (A pure-ruff lint job needs no deps
         # and could legitimately run on Linux, so gate on the command, not the
         # job count.)
+        gate_seen = False
         for name, job in _load_workflow()["jobs"].items():
             commands = _run_commands(job)
             if "pytest" in commands or "ty check" in commands:
+                gate_seen = True
                 assert job["runs-on"].startswith("macos"), (
                     f"job '{name}' runs the test/type gate off macOS: {job['runs-on']}"
                 )
+        # If a future edit renamed both invocations the loop would assert
+        # nothing; fail loudly rather than pass vacuously.
+        assert gate_seen, "no job runs the test/type gate; macOS rule unverified"
 
     def test_runs_all_four_quality_gates(self):
         # CI must enforce exactly what the .claude hooks do; a dropped gate
@@ -92,6 +97,12 @@ class TestCIWorkflow:
         commands = _all_run_commands(_load_workflow())
         for gate in _REQUIRED_GATES:
             assert gate in commands, f"CI is missing the `{gate}` gate"
+        # The lint gate must FAIL on violations, not auto-fix them: "ruff check"
+        # is a substring of "ruff check --fix", so pin the failing form. (The
+        # local ruff-format.sh hook uses --fix intentionally; CI must not.)
+        assert "ruff check --fix" not in commands, (
+            "CI lint gate must fail on violations, not auto-fix them"
+        )
 
     def test_installs_pinned_toolchain_via_uv(self):
         # The gates run the pinned toolchain from uv.lock (`uv run <tool>`), so
@@ -105,6 +116,26 @@ class TestCIWorkflow:
             for step in job["steps"]
         ]
         assert any(action.startswith("astral-sh/setup-uv") for action in uses)
+
+    def test_grants_no_write_permissions(self):
+        # The workflow only reads source and runs lint/type/test; GITHUB_TOKEN
+        # must not carry write scope. An explicit read-only block replaces the
+        # repo-default (which can be read/write).
+        permissions = _load_workflow().get("permissions")
+        assert permissions, "workflow must declare an explicit permissions block"
+        assert all(scope in ("read", "none") for scope in permissions.values()), (
+            f"permissions grant more than read: {permissions}"
+        )
+        assert permissions.get("contents") == "read"  # checkout needs read
+
+    def test_jobs_cap_their_runtime(self):
+        # Every job must set an explicit timeout so a hang (e.g. a stalled
+        # `uv sync`) fails fast instead of holding a runner for the 6-hour
+        # default.
+        for name, job in _load_workflow()["jobs"].items():
+            assert isinstance(job.get("timeout-minutes"), int), (
+                f"job '{name}' sets no timeout-minutes cap"
+            )
 
 
 class TestPythonVersionPin:
@@ -121,5 +152,5 @@ class TestPythonVersionPin:
             requires = tomllib.load(fh)["project"]["requires-python"]
         assert requires == ">=3.12"
         pin = tuple(int(p) for p in _PYTHON_VERSION_FILE.read_text().strip().split("."))
-        floor = tuple(int(p) for p in requires.lstrip(">=").split("."))
+        floor = tuple(int(p) for p in requires.removeprefix(">=").split("."))
         assert pin >= floor, f"pin {pin} < requires-python {requires}"
