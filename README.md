@@ -44,6 +44,10 @@ uv run ty check .     # Type check
 uv run pytest         # Unit tests
 ```
 
+### Continuous integration
+
+[GitHub Actions](.github/workflows/ci.yml) runs the same four checks on every push to `main` and every pull request. Jobs that run the tests or type-checker use a `macos-latest` (Apple Silicon) runner — `mlx` only ships a CUDA build for Linux, so the suite can't import on a GPU-less Linux runner, and macOS is the app's target platform anyway. No model weights are downloaded (the tests mock the model loaders), so CI stays fast and needs no Hugging Face token. `.python-version` pins the interpreter to 3.12 so local `uv` and CI resolve the same runtime.
+
 ### Claude Code hooks
 
 This repo ships opt-in [Claude Code](https://claude.com/claude-code) hooks (in `.claude/`) that run the checks above automatically as you edit: format + lint-fix (`ruff`) and type-check (`ty`) on each Python change, the test suite (`pytest`) once at the end of a turn that touched app/test/theme code, and a guard that blocks `Edit`/`Write` to `.env` and `uv.lock` (it does not intercept `Bash` writes, and fails closed if `jq` is missing). They require [`jq`](https://jqlang.github.io/jq/) and activate on session start (run `/hooks` to review). `tests/test_hooks.py` covers their behavior; `.claude/settings.local.json` (personal overrides) is gitignored.
