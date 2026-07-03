@@ -44,6 +44,7 @@ uv run ty check .                # Type check
 uv run pytest                    # Run all tests
 uv run pytest tests/test_streamlit_app.py  # Run the app test file
 uv run pytest tests/test_hooks.py          # Run the hooks test file
+uv run pytest tests/test_ci.py             # Run the CI-workflow test file
 ```
 
 Ruff is configured in `pyproject.toml` (`[tool.ruff.lint]`: rule sets `E`, `F`, `I`, `UP`, `B`, `C4`, `SIM`); line length (`E501`) is delegated to the formatter, not linted.
@@ -58,6 +59,10 @@ Ruff is configured in `pyproject.toml` (`[tool.ruff.lint]`: rule sets `E`, `F`, 
 - **`guard-paths.sh`** (`PreToolUse`) — denies Edit/Write/MultiEdit to `.env`/`.env.*`, `secrets.toml`, and `uv.lock` (mutate only via `uv`) with a `permissionDecision: "deny"` JSON decision. Matching is **case-insensitive** (macOS's filesystem is), secret-free templates (`.env.example`/`.sample`/`.template`/`.dist`) are allowed through, and it **fails closed** — if `jq` is missing it denies rather than silently allowing. It is a best-effort guard on the Edit/Write/MultiEdit tools only: a **`Bash` command that writes these paths is not intercepted** (matchers match tool names, and Bash is also how `uv` legitimately rewrites `uv.lock`), so it is a convenience backstop, not a security boundary.
 
 Matchers only see tool *names* (`Edit|Write|MultiEdit`), so each script does its own path/extension filtering internally, and only for files inside `${CLAUDE_PROJECT_DIR}` — a ruff hook fired on a Markdown or out-of-repo edit must no-op, not run. If `jq` is absent every hook degrades (the PostToolUse hooks no-op; only the guard is loud, denying). `.claude/settings.local.json` (personal permission overrides) and `.claude/.tests-pending` are gitignored; `settings.json` is tracked non-executable (`100644` — Claude reads it, never execs it) while the `hooks/` scripts are tracked executable (`100755`, or a clone runs them with the wrong mode).
+
+## Continuous integration
+
+`.github/workflows/ci.yml` is the public mirror of the hooks: on every push to `main` and every pull request it runs the same four gates (ruff format/lint, ty, pytest) via the pinned toolchain (`astral-sh/setup-uv` with caching, then `uv sync` + `uv run <tool>`), so CI and the local hooks can't disagree on a rule. It runs on a `macos-latest` (Apple Silicon) runner — mandatory, not a preference: `uv.lock` resolves `mlx` to a CUDA-only build on Linux (`sys_platform == 'linux'`), so the suite can't even import on a GPU-less ubuntu runner; macOS is also the app's real target and is free for public repos. No model weights download (tests mock the getters), so CI needs no HF token. `.python-version` pins the interpreter to 3.12 so local uv and CI resolve the same runtime. `tests/test_ci.py` locks the workflow's triggers, the macOS-for-test/typecheck rule, the four-gate set, uv usage, and the version pin — it parses `ci.yml` with PyYAML (a dev dependency), normalizing the YAML-1.1 `on:`→`True` key.
 
 ## Gotchas
 
