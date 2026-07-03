@@ -1,8 +1,8 @@
 # Environment
 .venv/
 
-# Secrets — mirror guard-paths.sh and tests/test_secrets.py; the committed
-# .env.example/.sample/.template/.dist templates stay tracked.
+# Secrets — mirror guard-paths.sh and tests/test_secrets.py; any committed
+# .env.example/.sample/.template/.dist template stays tracked.
 .env
 .env.*
 !.env.example
