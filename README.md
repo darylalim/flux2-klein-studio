@@ -1,5 +1,7 @@
 # FLUX.2 Klein Studio
 
+[![CI](https://github.com/darylalim/flux2-klein-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/darylalim/flux2-klein-studio/actions/workflows/ci.yml)
+
 Streamlit application for generating and editing images using Black Forest Labs [FLUX.2 Klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) on Apple Silicon with MLX.
 
 ## Features

@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push on the same branch/PR cancels the in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Lint, type-check & test (macOS / Apple Silicon)
+    # macos-14+ is arm64 (Apple Silicon), the app's target platform. Linux
+    # runners can't be used: mlx only ships a CUDA build for Linux, so
+    # `import mlx` fails on a GPU-less runner and the suite won't load.
+    # macOS runners are free for public repositories.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true # caches the uv cache dir, keyed on uv.lock
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Ruff format
+        run: uv run ruff format --check .
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Type check
+        run: uv run ty check .
+
+      - name: Tests
+        run: uv run pytest
