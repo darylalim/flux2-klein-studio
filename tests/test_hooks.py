@@ -1,11 +1,13 @@
 """Tests for the Claude Code hooks under .claude/.
 
 The hooks are plain bash + jq scripts wired up in ``.claude/settings.json``, so
-this suite drives them the way Claude Code does: it feeds the PreToolUse /
-PostToolUse tool payload on stdin and asserts on the exit code and — for the
-guard — the JSON decision on stdout. A stubbed ``uv`` on ``PATH`` lets the
-routing of the PostToolUse hooks be checked (which file types trigger the
-toolchain, which no-op) without paying for a real ruff/ty/pytest run.
+this suite drives them the way Claude Code does: it feeds the tool payload on
+stdin and asserts on the exit code and — for the guard — the JSON decision on
+stdout. A stubbed ``uv`` on ``PATH`` lets the routing of the format/type hooks be
+checked (which file types trigger the toolchain, which no-op) without paying for
+a real ruff/ty run. The test suite itself is gated at end of turn: a PostToolUse
+hook (mark-tests-pending.sh) drops a marker and the Stop hook (run-tests.sh)
+consumes it, so those two are tested via the marker rather than a per-edit run.
 """
 
 import json
@@ -19,18 +21,20 @@ import pytest
 _HOOKS_DIR = Path(__file__).resolve().parent.parent / ".claude" / "hooks"
 _SETTINGS = _HOOKS_DIR.parent / "settings.json"
 
-# The subprocess-driven tests need bash to run the scripts and jq (which every
-# hook shells out to); skip them cleanly on an environment that lacks either
-# rather than fail on an infrastructure gap. The wiring tests below are pure
-# JSON/filesystem checks and run regardless.
+# The subprocess-driven tests need bash to run the scripts and jq (which the
+# parsing hooks shell out to); skip them cleanly on an environment that lacks
+# either rather than fail on an infrastructure gap. The wiring tests below are
+# pure JSON/filesystem checks and run regardless.
 _requires_shell = pytest.mark.skipif(
     shutil.which("bash") is None or shutil.which("jq") is None,
     reason="hook scripts require bash and jq",
 )
 
+_HOOK_PREFIX = "${CLAUDE_PROJECT_DIR}/.claude/hooks/"
+
 
 def _run_hook(script, file_path, *, project_dir, env=None, tool_name="Edit"):
-    """Invoke a hook exactly like Claude Code: the tool payload on stdin.
+    """Invoke a tool-event hook exactly like Claude Code: the payload on stdin.
 
     ``CLAUDE_PROJECT_DIR`` is always set (the scripts reference it); ``env``
     extends/overrides the child environment (e.g. a stubbed ``PATH``). Returns
@@ -39,12 +43,21 @@ def _run_hook(script, file_path, *, project_dir, env=None, tool_name="Edit"):
     payload = json.dumps(
         {"tool_name": tool_name, "tool_input": {"file_path": str(file_path)}}
     )
+    return _exec(script, payload, project_dir=project_dir, env=env)
+
+
+def _run_stop_hook(script, *, project_dir, env=None):
+    """Invoke a Stop hook: no tool payload (Stop receives none)."""
+    return _exec(script, "", project_dir=project_dir, env=env)
+
+
+def _exec(script, stdin, *, project_dir, env=None):
     child_env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project_dir)}
     if env:
         child_env.update(env)
     return subprocess.run(
         ["bash", str(_HOOKS_DIR / script)],
-        input=payload,
+        input=stdin,
         capture_output=True,
         text=True,
         env=child_env,
@@ -78,50 +91,89 @@ def _uv_stub_env(tmp_path, *, exit_code=0):
     return env, log
 
 
-def _configured_commands():
-    """Every hook command string across all events in settings.json."""
+def _no_jq_env(tmp_path):
+    """A PATH with bash/cat/basename but NOT jq, to exercise the fail-closed path."""
+    bin_dir = tmp_path / "nojq-bin"
+    bin_dir.mkdir(exist_ok=True)
+    for tool in ("bash", "cat", "basename"):
+        src = shutil.which(tool)
+        if src and not (bin_dir / tool).exists():
+            (bin_dir / tool).symlink_to(src)
+    return {"PATH": str(bin_dir)}
+
+
+def _project(tmp_path):
+    """A throwaway project dir with a .claude/ subdir (for the marker)."""
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True, exist_ok=True)
+    return proj
+
+
+def _commands_by_event():
+    """{event: {script basename, ...}} across settings.json."""
+    settings = json.loads(_SETTINGS.read_text())
+    return {
+        event: {
+            Path(hook["command"]).name for group in groups for hook in group["hooks"]
+        }
+        for event, groups in settings["hooks"].items()
+    }
+
+
+def _matchers_for(event):
+    settings = json.loads(_SETTINGS.read_text())
+    return [group.get("matcher") for group in settings["hooks"][event]]
+
+
+def _all_commands():
     settings = json.loads(_SETTINGS.read_text())
     return [
         hook["command"]
-        for event in settings["hooks"].values()
-        for group in event
+        for groups in settings["hooks"].values()
+        for group in groups
         for hook in group["hooks"]
     ]
 
 
 class TestHookWiring:
-    """settings.json must reference real, executable hook scripts."""
+    """settings.json must reference real, executable scripts, bound to events."""
 
-    def test_settings_is_valid_json_with_hooks(self):
+    def test_settings_is_valid_json_with_expected_events(self):
         settings = json.loads(_SETTINGS.read_text())
-        assert "hooks" in settings
-        assert {"PreToolUse", "PostToolUse"} <= set(settings["hooks"])
+        assert {"PreToolUse", "PostToolUse", "Stop"} <= set(settings["hooks"])
 
-    def test_expected_hooks_are_wired(self):
-        names = {Path(cmd).name for cmd in _configured_commands()}
-        assert names == {
-            "guard-paths.sh",
+    def test_scripts_are_bound_to_the_correct_events(self):
+        by_event = _commands_by_event()
+        assert by_event["PreToolUse"] == {"guard-paths.sh"}
+        assert by_event["PostToolUse"] == {
             "ruff-format.sh",
             "ty-check.sh",
-            "pytest.sh",
+            "mark-tests-pending.sh",
         }
+        assert by_event["Stop"] == {"run-tests.sh"}
+
+    def test_commands_use_the_project_dir_prefix(self):
+        # Catches a prefix/variable typo like ${CLAUDE_PROJ_DIR}.
+        for cmd in _all_commands():
+            assert cmd.startswith(_HOOK_PREFIX), cmd
 
     def test_referenced_scripts_exist_and_are_executable(self):
-        commands = _configured_commands()
+        commands = _all_commands()
         assert commands, "no hook commands configured"
         for cmd in commands:
-            # Commands look like "${CLAUDE_PROJECT_DIR}/.claude/hooks/foo.sh".
             script = _HOOKS_DIR / Path(cmd).name
             assert script.exists(), f"{cmd} -> missing {script}"
             assert os.access(script, os.X_OK), f"{script} is not executable"
 
-    def test_guard_runs_before_edits_writes(self):
-        settings = json.loads(_SETTINGS.read_text())
-        matchers = {group["matcher"] for group in settings["hooks"]["PreToolUse"]}
-        # The guard must fire on the file-mutating tools.
-        assert any("Edit" in m and "Write" in m for m in matchers), (
-            f"guard matcher does not cover Edit/Write: {matchers}"
-        )
+    @pytest.mark.parametrize("event", ["PreToolUse", "PostToolUse"])
+    def test_tool_matchers_cover_edit_write_multiedit(self, event):
+        # A matcher typo (or a dropped MultiEdit) would silently disable the
+        # hooks on those tools while the suite stayed green — assert all three.
+        matchers = _matchers_for(event)
+        assert matchers, f"{event} has no matcher groups"
+        assert all(
+            {"Edit", "Write", "MultiEdit"} <= set(m.split("|")) for m in matchers
+        ), f"{event} matchers miss a tool: {matchers}"
 
 
 @_requires_shell
@@ -129,7 +181,8 @@ class TestGuardPaths:
     """PreToolUse guard: deny writes to protected files, allow everything else."""
 
     @pytest.mark.parametrize(
-        "name", [".env", ".env.local", ".env.production", "uv.lock"]
+        "name",
+        [".env", ".env.local", ".env.production", "uv.lock", "secrets.toml"],
     )
     def test_protected_files_are_denied(self, name, tmp_path):
         result = _run_hook("guard-paths.sh", tmp_path / name, project_dir=tmp_path)
@@ -139,6 +192,22 @@ class TestGuardPaths:
         assert decision["hookEventName"] == "PreToolUse"
         assert decision["permissionDecision"] == "deny"
         assert name in decision["permissionDecisionReason"]
+
+    @pytest.mark.parametrize("name", ["UV.LOCK", ".ENV", ".Env.Local"])
+    def test_matching_is_case_insensitive(self, name, tmp_path):
+        # macOS's default filesystem is case-insensitive, so a mis-cased path
+        # opens the real protected file and must still be denied.
+        result = _run_hook("guard-paths.sh", tmp_path / name, project_dir=tmp_path)
+        decision = json.loads(result.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny"
+
+    @pytest.mark.parametrize(
+        "name", [".env.example", ".env.sample", ".env.template", ".env.dist"]
+    )
+    def test_secret_free_templates_are_allowed(self, name, tmp_path):
+        result = _run_hook("guard-paths.sh", tmp_path / name, project_dir=tmp_path)
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""  # not denied
 
     @pytest.mark.parametrize(
         "name",
@@ -152,111 +221,179 @@ class TestGuardPaths:
 
     def test_missing_file_path_is_a_noop(self, tmp_path):
         # A tool call with no file_path (e.g. Bash) is defended by jq's `// empty`.
-        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}})
-        result = subprocess.run(
-            ["bash", str(_HOOKS_DIR / "guard-paths.sh")],
-            input=payload,
-            capture_output=True,
-            text=True,
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
-            timeout=30,
+        result = _exec(
+            "guard-paths.sh",
+            json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
+            project_dir=tmp_path,
         )
         assert result.returncode == 0
         assert result.stdout.strip() == ""
 
+    def test_fails_closed_when_jq_is_missing(self, tmp_path):
+        # Without jq the guard cannot parse the payload, so it must DENY rather
+        # than silently allow a protected write through.
+        result = _run_hook(
+            "guard-paths.sh",
+            tmp_path / "anything.txt",
+            project_dir=tmp_path,
+            env=_no_jq_env(tmp_path),
+        )
+        decision = json.loads(result.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny"
+        assert "jq" in decision["permissionDecisionReason"]
+
 
 @_requires_shell
 class TestRuffFormatHook:
-    """PostToolUse: format + lint-fix edited Python files, no-op otherwise."""
+    """PostToolUse: format + lint-fix edited in-project Python files, else no-op."""
 
-    def test_formats_python_file(self, tmp_path):
+    def test_formats_python_file_scoped_to_that_file(self, tmp_path):
+        proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
-        py = tmp_path / "mod.py"
+        py = proj / "mod.py"
         py.write_text("x=1\n")
-        result = _run_hook("ruff-format.sh", py, project_dir=tmp_path, env=env)
+        result = _run_hook("ruff-format.sh", py, project_dir=proj, env=env)
         assert result.returncode == 0
         logged = log.read_text()
         assert "ruff format" in logged
         assert "ruff check --fix" in logged
+        assert str(py) in logged  # ruff is scoped to the edited file, not the repo
 
     def test_skips_non_python_file(self, tmp_path):
+        proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
-        md = tmp_path / "README.md"
+        md = proj / "README.md"
         md.write_text("# hi\n")
-        result = _run_hook("ruff-format.sh", md, project_dir=tmp_path, env=env)
+        result = _run_hook("ruff-format.sh", md, project_dir=proj, env=env)
         assert result.returncode == 0
         assert log.read_text() == ""  # uv never invoked
 
     def test_skips_nonexistent_python_file(self, tmp_path):
-        # The `-f` guard means a path that no longer exists is left alone.
+        proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
         result = _run_hook(
-            "ruff-format.sh", tmp_path / "ghost.py", project_dir=tmp_path, env=env
+            "ruff-format.sh", proj / "ghost.py", project_dir=proj, env=env
         )
+        assert result.returncode == 0
+        assert log.read_text() == ""
+
+    def test_skips_file_outside_the_project(self, tmp_path):
+        # An edit to a .py file outside the repo must not be reformatted.
+        proj = _project(tmp_path)
+        env, log = _uv_stub_env(tmp_path)
+        outside = tmp_path / "outside.py"
+        outside.write_text("x=1\n")
+        result = _run_hook("ruff-format.sh", outside, project_dir=proj, env=env)
         assert result.returncode == 0
         assert log.read_text() == ""
 
     def test_is_non_blocking(self, tmp_path):
         # Even if ruff "fails", the formatter hook must never block (exit 0).
+        proj = _project(tmp_path)
         env, _ = _uv_stub_env(tmp_path, exit_code=1)
-        py = tmp_path / "mod.py"
+        py = proj / "mod.py"
         py.write_text("x=1\n")
-        result = _run_hook("ruff-format.sh", py, project_dir=tmp_path, env=env)
+        result = _run_hook("ruff-format.sh", py, project_dir=proj, env=env)
         assert result.returncode == 0
 
 
 @_requires_shell
 class TestTyCheckHook:
-    """PostToolUse: type-check on Python edits; block (exit 2) on type errors."""
+    """PostToolUse: type-check on in-project Python edits; exit 2 on failure."""
 
     def test_type_checks_after_python_edit(self, tmp_path):
+        proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
-        result = _run_hook(
-            "ty-check.sh", tmp_path / "mod.py", project_dir=tmp_path, env=env
-        )
+        result = _run_hook("ty-check.sh", proj / "mod.py", project_dir=proj, env=env)
         assert result.returncode == 0
         assert "ty check" in log.read_text()
 
     def test_skips_non_python_file(self, tmp_path):
+        proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
-        result = _run_hook(
-            "ty-check.sh", tmp_path / "README.md", project_dir=tmp_path, env=env
-        )
+        result = _run_hook("ty-check.sh", proj / "README.md", project_dir=proj, env=env)
         assert result.returncode == 0
         assert log.read_text() == ""
 
-    def test_type_errors_block_with_exit_2(self, tmp_path):
+    def test_skips_file_outside_the_project(self, tmp_path):
+        proj = _project(tmp_path)
+        env, log = _uv_stub_env(tmp_path)
+        outside = tmp_path / "outside.py"
+        result = _run_hook("ty-check.sh", outside, project_dir=proj, env=env)
+        assert result.returncode == 0
+        assert log.read_text() == ""
+
+    def test_failure_blocks_with_exit_2_and_neutral_wording(self, tmp_path):
+        proj = _project(tmp_path)
         env, _ = _uv_stub_env(tmp_path, exit_code=1)
-        result = _run_hook(
-            "ty-check.sh", tmp_path / "mod.py", project_dir=tmp_path, env=env
-        )
+        result = _run_hook("ty-check.sh", proj / "mod.py", project_dir=proj, env=env)
         assert result.returncode == 2  # surfaced back to Claude as an error
-        assert "ty reported type errors" in result.stderr
+        # Exit-code-agnostic wording: an env failure isn't mislabeled a type error.
+        assert "ty check failed" in result.stderr
 
 
 @_requires_shell
-class TestPytestHook:
-    """PostToolUse: run the suite on app/test edits; block (exit 2) on failures."""
+class TestMarkTestsPendingHook:
+    """PostToolUse: drop the end-of-turn marker for suite-relevant edits."""
 
-    @pytest.mark.parametrize("rel", ["streamlit_app.py", "tests/test_app.py"])
-    def test_runs_on_app_and_test_edits(self, rel, tmp_path):
+    def _marker(self, proj):
+        return proj / ".claude" / ".tests-pending"
+
+    @pytest.mark.parametrize(
+        "rel",
+        ["streamlit_app.py", "tests/test_app.py", ".streamlit/config.toml"],
+    )
+    def test_marks_pending_for_covered_files(self, rel, tmp_path):
+        proj = _project(tmp_path)
+        result = _run_hook("mark-tests-pending.sh", proj / rel, project_dir=proj)
+        assert result.returncode == 0
+        assert self._marker(proj).exists()
+
+    def test_no_marker_for_unrelated_edit(self, tmp_path):
+        proj = _project(tmp_path)
+        result = _run_hook(
+            "mark-tests-pending.sh", proj / "README.md", project_dir=proj
+        )
+        assert result.returncode == 0
+        assert not self._marker(proj).exists()
+
+    def test_no_marker_for_file_outside_project(self, tmp_path):
+        proj = _project(tmp_path)
+        outside = tmp_path / "streamlit_app.py"
+        result = _run_hook("mark-tests-pending.sh", outside, project_dir=proj)
+        assert result.returncode == 0
+        assert not self._marker(proj).exists()
+
+
+@_requires_shell
+class TestRunTestsHook:
+    """Stop hook: run the suite once per turn iff a marker is pending."""
+
+    def _marker(self, proj):
+        return proj / ".claude" / ".tests-pending"
+
+    def test_runs_pytest_and_consumes_marker_when_pending(self, tmp_path):
+        proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
-        result = _run_hook("pytest.sh", tmp_path / rel, project_dir=tmp_path, env=env)
+        self._marker(proj).write_text("")
+        result = _run_stop_hook("run-tests.sh", project_dir=proj, env=env)
         assert result.returncode == 0
         assert "pytest" in log.read_text()
+        assert not self._marker(proj).exists()  # consumed -> loop-safe
 
-    def test_skips_unrelated_edits(self, tmp_path):
+    def test_noop_when_not_pending(self, tmp_path):
+        proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
-        result = _run_hook(
-            "pytest.sh", tmp_path / "README.md", project_dir=tmp_path, env=env
-        )
+        result = _run_stop_hook("run-tests.sh", project_dir=proj, env=env)
         assert result.returncode == 0
-        assert log.read_text() == ""
+        assert log.read_text() == ""  # pytest never invoked
 
-    def test_failures_block_with_exit_2(self, tmp_path):
+    def test_failure_blocks_with_exit_2_and_clears_marker(self, tmp_path):
+        proj = _project(tmp_path)
         env, _ = _uv_stub_env(tmp_path, exit_code=1)
-        result = _run_hook(
-            "pytest.sh", tmp_path / "streamlit_app.py", project_dir=tmp_path, env=env
-        )
+        self._marker(proj).write_text("")
+        result = _run_stop_hook("run-tests.sh", project_dir=proj, env=env)
         assert result.returncode == 2
-        assert "pytest failures" in result.stderr
+        assert "pytest run failed" in result.stderr
+        # Marker cleared even on failure, so a no-edit follow-up turn won't loop.
+        assert not self._marker(proj).exists()
