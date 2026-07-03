@@ -1,6 +1,16 @@
 # Environment
-.env
 .venv/
+
+# Secrets — mirror guard-paths.sh and tests/test_secrets.py; the committed
+# .env.example/.sample/.template/.dist templates stay tracked.
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+!.env.dist
+secrets.toml
+*.pem
 
 # Python
 __pycache__/
@@ -9,9 +19,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .ty_cache/
-
-# Streamlit (config.toml is tracked; never commit secrets)
-.streamlit/secrets.toml
 
 # Claude Code (settings.json + hooks/ are tracked; personal overrides are not)
 .claude/settings.local.json
