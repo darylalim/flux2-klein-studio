@@ -15,6 +15,11 @@ secrets.toml
 # Python
 __pycache__/
 
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
 # Tooling caches
 .pytest_cache/
 .ruff_cache/
