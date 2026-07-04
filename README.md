@@ -1,6 +1,8 @@
 # FLUX.2 Klein Studio
 
 [![CI](https://github.com/darylalim/flux2-klein-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/darylalim/flux2-klein-studio/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/darylalim/flux2-klein-studio)](https://github.com/darylalim/flux2-klein-studio/releases)
+[![License](https://img.shields.io/github/license/darylalim/flux2-klein-studio)](LICENSE)
 
 Streamlit application for generating and editing images using Black Forest Labs [FLUX.2 Klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) on Apple Silicon with MLX.
 
@@ -50,7 +52,7 @@ uv run pytest         # Unit tests
 
 ### Releases
 
-Pushing a `vX.Y.Z` tag triggers [a release workflow](.github/workflows/release.yml) that first checks the tag matches the version declared in `pyproject.toml` — a mismatch fails the build instead of publishing a mislabeled release — and then publishes a [GitHub release](https://github.com/darylalim/flux2-klein-studio/releases) with auto-generated notes. `tests/test_release.py` locks the workflow's contract, the same way `tests/test_ci.py` locks CI.
+Pushing a `vX.Y.Z` tag triggers [a release workflow](.github/workflows/release.yml) that first checks the tag matches the version declared in `pyproject.toml` — a mismatch fails the build instead of publishing a mislabeled release — and then publishes a [GitHub release](https://github.com/darylalim/flux2-klein-studio/releases) with auto-generated notes. `tests/test_release.py` locks the workflow's contract, the same way `tests/test_ci.py` locks CI. A cross-workflow guard (`tests/test_workflows.py`) additionally fails the build if any workflow's `run:` script interpolates a `${{ }}` expression directly — the GitHub Actions command-injection vector.
 
 ### Claude Code hooks
 
