@@ -117,6 +117,14 @@ class TestCIWorkflow:
         ]
         assert any(action.startswith("astral-sh/setup-uv") for action in uses)
 
+    def test_syncs_against_locked_lockfile(self):
+        # `uv sync --locked` fails if uv.lock is stale (e.g. a version bump or
+        # dependency change that forgot `uv lock`), so a drifted lockfile can't
+        # slip through CI silently — plain `uv sync` would just re-resolve.
+        assert "uv sync --locked" in _all_run_commands(_load_workflow()), (
+            "CI must sync against the committed lockfile (`uv sync --locked`)"
+        )
+
     def test_grants_no_write_permissions(self):
         # The workflow only reads source and runs lint/type/test; GITHUB_TOKEN
         # must not carry write scope. An explicit read-only block replaces the

@@ -35,7 +35,10 @@ jobs:
           enable-cache: true # caches the uv cache dir, keyed on uv.lock
 
       - name: Install dependencies
-        run: uv sync
+        # --locked fails the build if uv.lock is stale (e.g. a version bump or
+        # dependency change that forgot `uv lock`), instead of silently
+        # re-resolving. Keeps the committed lockfile honest.
+        run: uv sync --locked
 
       - name: Ruff format
         run: uv run ruff format --check .
