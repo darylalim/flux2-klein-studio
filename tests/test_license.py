@@ -1,0 +1,138 @@
+"""Contract tests for the project's license declaration.
+
+The repo shipped for several versions with no license at all — which under
+copyright law means *all rights reserved*, so nobody could legally fork or reuse
+the public code. It is now MIT, declared in three places that must stay
+consistent or the guarantee silently rots:
+
+  * ``LICENSE`` — the canonical MIT text. GitHub's Licensee detector matches the
+    wording, so an emptied or reworded file drops the repo's "MIT License" badge
+    and blanks the ``licenseInfo`` API field.
+  * ``pyproject.toml`` — ``license = "MIT"`` (a PEP 639 SPDX string), so the
+    packaging metadata agrees with the file.
+  * ``README.md`` — a public-facing License section that links the file and
+    credits the permissive upstreams.
+
+These tests tie the three together against one ``_EXPECTED_SPDX`` source of
+truth: relicense one without the others and CI fails, exactly as ``test_ci.py``
+ties ``.python-version`` to ``requires-python``.
+"""
+
+import re
+import shutil
+import subprocess
+import tomllib
+from pathlib import Path
+
+import pytest
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_LICENSE = _REPO_ROOT / "LICENSE"
+_PYPROJECT = _REPO_ROOT / "pyproject.toml"
+_README = _REPO_ROOT / "README.md"
+
+# The SPDX identifier the whole stack settles on. Pinned once so a drift in
+# either the LICENSE file or pyproject is measured against a single truth.
+_EXPECTED_SPDX = "MIT"
+
+# Load-bearing sentences of the canonical MIT text. GitHub's detector keys off
+# this wording; if it stops appearing, the badge and licenseInfo go with it. Not
+# the full file (that would lock trailing-whitespace trivia) — just the phrases
+# that identify the license.
+_MIT_MARKERS = (
+    "MIT License",
+    "Permission is hereby granted, free of charge",
+    'THE SOFTWARE IS PROVIDED "AS IS"',
+    "WITHOUT WARRANTY OF ANY KIND",
+)
+
+# "Copyright (c) <year> <holder>" — MIT detection needs a real copyright notice.
+# Assert its shape (a 4-digit year, optional range, non-empty holder), not the
+# specific name or year, which may legitimately change.
+_COPYRIGHT_RE = re.compile(r"Copyright \(c\) \d{4}(?:-\d{4})? (\S.*\S)")
+
+
+def _pyproject_license():
+    """The ``project.license`` value from pyproject.toml (a PEP 639 SPDX string)."""
+    with _PYPROJECT.open("rb") as fh:
+        return tomllib.load(fh)["project"]["license"]
+
+
+class TestLicenseFile:
+    """``LICENSE`` must exist and be recognizably the MIT license."""
+
+    def test_license_file_exists_and_nonempty(self):
+        assert _LICENSE.is_file(), "LICENSE file is missing"
+        assert _LICENSE.read_text().strip(), "LICENSE file is empty"
+
+    def test_license_is_mit(self):
+        text = _LICENSE.read_text()
+        for marker in _MIT_MARKERS:
+            assert marker in text, f"LICENSE is missing MIT marker: {marker!r}"
+
+    def test_license_carries_a_copyright_notice(self):
+        # A blanked holder or missing year would still read as "MIT-ish" prose
+        # but fail GitHub's detection, so assert the notice is well-formed.
+        match = _COPYRIGHT_RE.search(_LICENSE.read_text())
+        assert match, "LICENSE has no 'Copyright (c) <year> <holder>' line"
+        assert match.group(1).strip(), "LICENSE copyright holder is empty"
+
+
+class TestPyprojectLicense:
+    """``pyproject.toml`` must declare the license as a PEP 639 SPDX string."""
+
+    def test_declares_mit_spdx_string(self):
+        license_field = _pyproject_license()
+        # PEP 639 uses a bare SPDX string; the deprecated table form
+        # (``{ text = "..." }``) or a removed field must fail here.
+        assert isinstance(license_field, str), (
+            f"license must be a PEP 639 SPDX string, got {type(license_field).__name__}"
+        )
+        assert license_field == _EXPECTED_SPDX, (
+            f"pyproject license is {license_field!r}, expected {_EXPECTED_SPDX!r}"
+        )
+
+
+class TestLicenseConsistency:
+    """The file and the metadata must name the *same* license — the anti-drift
+    guard. Relicensing means editing both; editing one alone fails here."""
+
+    def test_pyproject_matches_license_file(self):
+        assert _pyproject_license() == _EXPECTED_SPDX
+        assert f"{_EXPECTED_SPDX} License" in _LICENSE.read_text(), (
+            f"pyproject declares {_EXPECTED_SPDX} but LICENSE is not the "
+            f"{_EXPECTED_SPDX} text"
+        )
+
+
+class TestReadmeAttribution:
+    """The public README must keep its License section and link the file."""
+
+    def test_readme_links_license_and_names_it(self):
+        text = _README.read_text()
+        assert "## License" in text, "README dropped its License section"
+        assert "(LICENSE)" in text, "README License section no longer links LICENSE"
+        assert _EXPECTED_SPDX in text, (
+            f"README no longer names the {_EXPECTED_SPDX} license"
+        )
+
+
+_requires_git = pytest.mark.skipif(
+    shutil.which("git") is None, reason="tracked-file check needs git"
+)
+
+
+@_requires_git
+class TestLicenseTracked:
+    """An untracked (e.g. gitignored) LICENSE silently defeats the point: GitHub
+    only detects a license committed on the default branch."""
+
+    def test_license_is_git_tracked(self):
+        out = subprocess.run(
+            ["git", "-C", str(_REPO_ROOT), "ls-files", "LICENSE"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        ).stdout
+        assert out.strip() == "LICENSE", "LICENSE is not git-tracked"

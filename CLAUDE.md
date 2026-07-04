@@ -56,6 +56,7 @@ uv run pytest tests/test_streamlit_app.py  # Run the app test file
 uv run pytest tests/test_hooks.py          # Run the hooks test file
 uv run pytest tests/test_ci.py             # Run the CI-workflow test file
 uv run pytest tests/test_secrets.py        # Run the secret-leak guard test file
+uv run pytest tests/test_license.py        # Run the license-consistency test file
 ```
 
 Ruff is configured in `pyproject.toml` (`[tool.ruff.lint]`: rule sets `E`, `F`, `I`, `UP`, `B`, `C4`, `SIM`); line length (`E501`) is delegated to the formatter, not linted.
