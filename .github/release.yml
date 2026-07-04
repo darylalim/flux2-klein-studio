@@ -1,0 +1,40 @@
+# Configuration for GitHub's automatically generated release notes
+# (what `gh release create --generate-notes` and the "Generate release notes"
+# button in the UI produce). See:
+# https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+#
+# CAVEAT: these categories bucket changes by their *pull-request label*. This
+# repo mostly commits straight to main, so until a change arrives via a labeled
+# PR it lands in the catch-all "Other changes" bucket. The config is here so
+# that (a) release notes are consistent the moment PRs are used, and (b) bot
+# and skip-changelog noise is excluded regardless.
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+    authors:
+      - dependabot
+      - github-actions
+  categories:
+    - title: ✨ Features
+      labels:
+        - feature
+        - enhancement
+    - title: 🐛 Fixes
+      labels:
+        - bug
+        - fix
+    - title: 📝 Documentation
+      labels:
+        - documentation
+    - title: 🧰 Maintenance
+      labels:
+        - chore
+        - ci
+        - dependencies
+        - refactor
+        - test
+    # Catch-all so nothing is silently dropped from the notes.
+    - title: 🔀 Other changes
+      labels:
+        - "*"

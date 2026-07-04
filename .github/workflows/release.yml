@@ -1,0 +1,70 @@
+name: Release
+
+# Cutting a release is a push of a version tag: `git tag vX.Y.Z && git push
+# origin vX.Y.Z`. This workflow then verifies the tag agrees with the version
+# the code declares and publishes a GitHub release with auto-generated notes.
+# It is the release-side mirror of the `--locked` / test_license discipline:
+# a tag whose version disagrees with pyproject.toml fails the build instead of
+# shipping a mislabeled release.
+on:
+  push:
+    tags:
+      - "v*"
+
+# Least privilege: publishing a release is the one thing this job does, and
+# that needs write access to repository contents (releases live under the
+# contents scope). Nothing else is granted.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish GitHub release
+    # Unlike ci.yml this job never imports the app (no mlx), it only reads
+    # pyproject.toml and calls the GitHub API, so the cheaper Linux runner is
+    # fine — the CUDA-only-mlx-on-Linux constraint does not apply here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reuse the repo's pinned interpreter so `tomllib` (3.11+) is guaranteed
+      # present for reading the version, rather than trusting the runner image.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      # The enforced consistency check: the tag must name the same version the
+      # code claims. `github.ref_name` is passed via env (never interpolated
+      # into the script) so a crafted tag name can't inject shell.
+      - name: Assert tag matches pyproject version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          tag_version="${TAG#v}"
+          pyproject_version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          echo "tag version:       $tag_version"
+          echo "pyproject version: $pyproject_version"
+          if [ "$tag_version" != "$pyproject_version" ]; then
+            echo "::error::Tag '$TAG' (version $tag_version) does not match pyproject.toml version $pyproject_version. Bump pyproject.toml or retag."
+            exit 1
+          fi
+
+      # Idempotent so a re-run or a re-pushed tag can't fail the build on an
+      # "already exists" error, and a release created out-of-band (e.g. the
+      # curated first release) is left untouched instead of duplicated.
+      - name: Publish release
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to publish."
+            exit 0
+          fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --verify-tag \
+            --generate-notes
