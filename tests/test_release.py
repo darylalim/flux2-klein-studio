@@ -100,6 +100,19 @@ class TestReleaseWorkflow:
         assert "github.ref_name" in _RELEASE_WORKFLOW.read_text(), (
             "release must capture the pushed tag name to compare against it"
         )
+        # The tag carries a leading `v` (v0.6.5) but pyproject declares the bare
+        # version (0.6.5); the check must strip it, or *every* release would fail
+        # the gate on a spurious "v0.6.5 != 0.6.5". Locks the normalization.
+        assert "TAG#v" in commands, (
+            "release must strip the leading 'v' from the tag before comparing"
+        )
+        # The gate must fire on INEQUALITY (mismatch fails). Locking the operator
+        # catches an accidental inversion to `==` — which would publish mismatched
+        # tags and reject matching ones while leaving every other token in this
+        # test satisfied, so none of the checks above would notice.
+        assert "!=" in commands, (
+            "the version check must gate on inequality (tag != pyproject version)"
+        )
         assert "exit 1" in commands, (
             "a tag/version mismatch must fail the build (exit 1), not warn"
         )
@@ -107,6 +120,14 @@ class TestReleaseWorkflow:
     def test_publishes_with_gh_release_create(self):
         commands = _all_run_commands(_load_workflow())
         assert "gh release create" in commands
+
+    def test_publishes_auto_generated_notes(self):
+        # From the second release on, notes are diffed against the previous tag;
+        # dropping --generate-notes would silently ship note-less releases.
+        commands = _all_run_commands(_load_workflow())
+        assert "--generate-notes" in commands, (
+            "release must publish with auto-generated notes"
+        )
 
     def test_publish_is_idempotent(self):
         # A re-run or a re-pushed tag must not fail on "release already exists";
