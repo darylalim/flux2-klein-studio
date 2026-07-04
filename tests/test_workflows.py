@@ -34,7 +34,9 @@ def _run_scripts():
     scripts = []
     for path in _workflow_files():
         with path.open() as fh:
-            data = yaml.safe_load(fh)
+            # An empty or comments-only .yml parses to None; `or {}` keeps a
+            # placeholder/disabled workflow from crashing the sweep with AttributeError.
+            data = yaml.safe_load(fh) or {}
         for job_name, job in (data.get("jobs") or {}).items():
             for step in job.get("steps", []):
                 if "run" in step:

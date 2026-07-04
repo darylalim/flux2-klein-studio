@@ -1,20 +1,19 @@
 """Contract tests for the tag-triggered release workflow.
 
-``.github/workflows/release.yml`` publishes a GitHub release when a ``vX.Y.Z``
-tag is pushed. It is the release-side mirror of the repo's "lock consistency,
-don't hope for it" discipline (``uv sync --locked``, ``tests/test_license.py``):
-before publishing, it asserts the tag names the same version ``pyproject.toml``
-declares, so a mislabeled tag fails the build instead of shipping a wrong
-release. These tests lock the parts that are easy to break silently:
+``.github/workflows/release.yml`` publishes a GitHub release when a version tag
+(``vMAJOR.MINOR.PATCH``) is pushed. It is the release-side mirror of the repo's
+"lock consistency, don't hope for it" discipline (``uv sync --locked``,
+``tests/test_license.py``): before publishing, it asserts the tag names the same
+version ``pyproject.toml`` declares, so a mislabeled tag fails the build instead
+of shipping a wrong release. These tests lock the parts that are easy to break
+silently:
 
-  * it fires on ``v*`` tags only — not on every push to ``main`` (that is
-    ci.yml's job); a release firing on branch pushes would spam releases.
-  * the version-consistency gate stays present — dropping it would let a tag
-    whose version disagrees with pyproject.toml publish anyway.
+  * it fires on version-shaped ``v*.*.*`` tags only — not on every push to
+    ``main`` (that is ci.yml's job), and not on an unrelated v-prefixed tag.
+  * the version-consistency gate stays present and fails on a mismatch.
+  * only ``contents: write`` is granted — no additional scope.
   * ``run:`` scripts never interpolate a ``${{ }}`` expression directly (the
-    tag name flows through ``env:`` and is referenced as ``"$TAG"``), so a
-    crafted tag can't inject shell.
-  * least-privilege ``contents: write`` (releases need it) and nothing broader.
+    tag name flows through ``env:`` and is referenced as ``"$TAG"``).
 
 YAML note: PyYAML (YAML 1.1) parses the bare mapping key ``on:`` as ``True``;
 ``_load_workflow`` normalizes it back so triggers are reachable as
@@ -28,7 +27,6 @@ import yaml
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _RELEASE_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "release.yml"
 _RELEASE_NOTES_CONFIG = _REPO_ROOT / ".github" / "release.yml"
-_PYTHON_VERSION_FILE = _REPO_ROOT / ".python-version"
 
 
 def _load_workflow():
@@ -50,6 +48,15 @@ def _all_run_commands(workflow):
     return "\n".join(step["run"] for step in _all_steps(workflow) if "run" in step)
 
 
+def _step_run(workflow, name_contains):
+    """The ``run`` body of the first step whose name contains ``name_contains``."""
+    needle = name_contains.lower()
+    for step in _all_steps(workflow):
+        if "run" in step and needle in str(step.get("name", "")).lower():
+            return step["run"]
+    return None
+
+
 class TestReleaseWorkflow:
     """Contract for ``.github/workflows/release.yml``."""
 
@@ -58,13 +65,21 @@ class TestReleaseWorkflow:
         assert _load_workflow()  # valid, non-empty YAML
 
     def test_triggers_only_on_version_tags(self):
-        # Releases are cut by pushing a vX.Y.Z tag; the trigger must be tag-based
-        # and scoped to the v-prefix, or unrelated tags would publish releases.
+        # Releases are cut by pushing a vMAJOR.MINOR.PATCH tag; the trigger must
+        # be tag-based and version-SHAPED, not a bare `v*` — otherwise an
+        # unrelated v-prefixed tag (`v2`, `viewer-checkpoint`) fires a spurious
+        # run that then dies in the version gate.
         triggers = _load_workflow()["on"]
         assert "push" in triggers, "release must trigger on a push of a tag"
         tags = triggers["push"].get("tags")
-        assert tags and any(pattern.startswith("v") for pattern in tags), (
-            f"release must trigger on v* tags, got tags={tags}"
+        assert tags, f"release must trigger on version tags, got tags={tags}"
+        assert all(p.startswith("v") for p in tags), (
+            f"tag patterns must be v-prefixed: {tags}"
+        )
+        # Require the MAJOR.MINOR.PATCH dot shape so a loosening back to a bare
+        # `v*` (which matches any v-prefixed tag) is caught here.
+        assert all(p.count(".") >= 2 for p in tags), (
+            f"tag patterns must be version-shaped (v*.*.*), not a bare v*: {tags}"
         )
 
     def test_does_not_trigger_on_branch_push_or_pr(self):
@@ -77,44 +92,70 @@ class TestReleaseWorkflow:
         )
         assert "pull_request" not in triggers
 
+    def test_serializes_same_tag_runs(self):
+        # A concurrency group keyed on the tag stops a re-pushed tag from racing
+        # two publishes into an "already exists" failure. cancel-in-progress must
+        # stay false — cancelling a half-finished publish is worse than waiting.
+        concurrency = _load_workflow().get("concurrency")
+        assert isinstance(concurrency, dict), (
+            "release must declare a concurrency group to serialize same-tag runs"
+        )
+        assert concurrency.get("cancel-in-progress") is False, (
+            "release must NOT cancel in-progress runs (would abort a publish mid-flight)"
+        )
+
     def test_grants_only_contents_write(self):
         # Publishing a release needs write to contents (releases live under the
-        # contents scope) and nothing more. An explicit block replaces the
-        # repo-default (which can be broader).
+        # contents scope) and nothing more.
         permissions = _load_workflow().get("permissions")
-        assert permissions, "workflow must declare an explicit permissions block"
+        assert isinstance(permissions, dict), (
+            "workflow must declare an explicit permissions block (a mapping, not "
+            "a bare 'write-all'/'read-all' string)"
+        )
         assert permissions.get("contents") == "write", (
             "release must grant contents: write to publish"
         )
-        assert all(
-            scope in ("read", "write", "none") for scope in permissions.values()
-        ), f"permissions grant more than write: {permissions}"
+        # Assert on the KEY SET, not the values: every valid Actions permission
+        # value is already one of read/write/none, so a values-only check is a
+        # tautology that can never fail. What must be locked is that no
+        # *additional* scope (id-token, packages, actions, ...) is granted — a
+        # token escalation releasing doesn't need.
+        assert set(permissions) == {"contents"}, (
+            f"release must grant only 'contents', not {sorted(permissions)}"
+        )
 
     def test_asserts_tag_matches_pyproject_version(self):
         # The enforced consistency gate: the published tag must name the same
-        # version the code declares. Losing this would let a mislabeled tag ship.
-        commands = _all_run_commands(_load_workflow())
-        assert "tomllib" in commands and "pyproject" in commands, (
-            "release must read the declared version from pyproject.toml"
+        # version the code declares. Scope the checks to the gate step's OWN run
+        # body (not the joined commands) so an `exit 1` in an unrelated step
+        # can't satisfy them.
+        gate = _step_run(_load_workflow(), "Assert tag matches")
+        assert gate, "release must have an 'Assert tag matches ...' step"
+        assert "tomllib" in gate and "pyproject" in gate, (
+            "the gate must read the declared version from pyproject.toml"
         )
         assert "github.ref_name" in _RELEASE_WORKFLOW.read_text(), (
             "release must capture the pushed tag name to compare against it"
         )
         # The tag carries a leading `v` (v0.6.5) but pyproject declares the bare
-        # version (0.6.5); the check must strip it, or *every* release would fail
-        # the gate on a spurious "v0.6.5 != 0.6.5". Locks the normalization.
-        assert "TAG#v" in commands, (
-            "release must strip the leading 'v' from the tag before comparing"
+        # version (0.6.5); the gate must strip it, or *every* release would fail
+        # on a spurious "v0.6.5 != 0.6.5".
+        assert "TAG#v" in gate, (
+            "the gate must strip the leading 'v' from the tag before comparing"
         )
-        # The gate must fire on INEQUALITY (mismatch fails). Locking the operator
-        # catches an accidental inversion to `==` — which would publish mismatched
-        # tags and reject matching ones while leaving every other token in this
-        # test satisfied, so none of the checks above would notice.
-        assert "!=" in commands, (
-            "the version check must gate on inequality (tag != pyproject version)"
+        # Fire on INEQUALITY and exit — locking both the operator AND that the
+        # `exit 1` lives in THIS step catches an inversion to `==` or a neutered
+        # log-only branch (which a global substring search over all steps misses).
+        assert "!=" in gate and "exit 1" in gate, (
+            "the gate must fail (exit 1) on a tag != pyproject-version mismatch"
         )
-        assert "exit 1" in commands, (
-            "a tag/version mismatch must fail the build (exit 1), not warn"
+
+    def test_cleans_up_orphan_tag_on_mismatch(self):
+        # On a version mismatch the gate deletes the just-pushed tag so it does
+        # not linger on the remote pointing at un-released code.
+        gate = _step_run(_load_workflow(), "Assert tag matches")
+        assert gate and "push --delete" in gate, (
+            "the gate must delete the orphan tag when the version check fails"
         )
 
     def test_publishes_with_gh_release_create(self):
@@ -127,6 +168,14 @@ class TestReleaseWorkflow:
         commands = _all_run_commands(_load_workflow())
         assert "--generate-notes" in commands, (
             "release must publish with auto-generated notes"
+        )
+
+    def test_marks_prerelease_tags_as_prerelease(self):
+        # A pre-release tag (v1.2.0-rc1) must publish with --prerelease so it
+        # never becomes the repo's "Latest" release.
+        commands = _all_run_commands(_load_workflow())
+        assert "--prerelease" in commands, (
+            "publish must mark pre-release tags with --prerelease"
         )
 
     def test_publish_is_idempotent(self):
@@ -186,3 +235,19 @@ class TestReleaseNotesConfig:
         categories = data["changelog"].get("categories", [])
         labels = [label for cat in categories for label in cat.get("labels", [])]
         assert "*" in labels, "notes config needs a '*' catch-all category"
+
+    def test_excludes_bots_by_their_actual_login(self):
+        # exclude.authors matches a PR author's exact login; bot logins carry a
+        # `[bot]` suffix, so bare `dependabot`/`github-actions` would match
+        # nothing. Lock the suffixed form so the exclusion actually fires.
+        with _RELEASE_NOTES_CONFIG.open() as fh:
+            data = yaml.safe_load(fh)
+        authors = data["changelog"].get("exclude", {}).get("authors", [])
+        for bot in authors:
+            assert not bot.endswith("]") or bot.endswith("[bot]"), (
+                f"bot author {bot!r} looks malformed"
+            )
+        assert not any(a in ("dependabot", "github-actions") for a in authors), (
+            "bot authors must use their real login handle (e.g. 'dependabot[bot]'), "
+            "not the bare name, or the exclusion never matches"
+        )

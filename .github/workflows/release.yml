@@ -9,7 +9,17 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      # MAJOR.MINOR.PATCH shape only, so an unrelated v-prefixed tag (a bookmark
+      # like `v2` or `viewer-checkpoint`) can't fire a spurious release run.
+      - "v*.*.*"
+
+# Serialize runs for the same tag: a re-pushed tag can otherwise spawn a second
+# run that races the view->create idempotency check into an "already exists"
+# failure. Never cancel-in-progress here — aborting a half-finished
+# `gh release create` is worse than making the next run wait.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 # Least privilege: publishing a release is the one thing this job does, and
 # that needs write access to repository contents (releases live under the
@@ -48,6 +58,10 @@ jobs:
           echo "pyproject version: $pyproject_version"
           if [ "$tag_version" != "$pyproject_version" ]; then
             echo "::error::Tag '$TAG' (version $tag_version) does not match pyproject.toml version $pyproject_version. Bump pyproject.toml or retag."
+            # Self-heal: delete the just-pushed orphan tag so it doesn't linger on
+            # the remote pointing at un-released code. checkout persists the token
+            # and contents: write covers deleting the ref.
+            git push --delete origin "$TAG" || echo "::warning::could not delete orphan tag $TAG"
             exit 1
           fi
 
@@ -63,8 +77,15 @@ jobs:
             echo "Release $TAG already exists; nothing to publish."
             exit 0
           fi
+          # A tag with a pre-release suffix (e.g. v1.2.0-rc1) publishes as a
+          # prerelease so it never becomes the repo's "Latest" release.
+          prerelease=""
+          case "$TAG" in
+            *-*) prerelease="--prerelease" ;;
+          esac
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" \
             --verify-tag \
-            --generate-notes
+            --generate-notes \
+            $prerelease
