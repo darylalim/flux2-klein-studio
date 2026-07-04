@@ -47,9 +47,11 @@ _MIT_MARKERS = (
 )
 
 # "Copyright (c) <year> <holder>" — MIT detection needs a real copyright notice.
-# Assert its shape (a 4-digit year, optional range, non-empty holder), not the
-# specific name or year, which may legitimately change.
-_COPYRIGHT_RE = re.compile(r"Copyright \(c\) \d{4}(?:-\d{4})? (\S.*\S)")
+# Match the shape (a 4-digit year, optional range, then the holder). The holder
+# group is deliberately permissive so a whitespace-only holder still matches and
+# is then caught by the .strip() assertion in the test, rather than silently
+# failing the match. Not the specific name or year, which may legitimately change.
+_COPYRIGHT_RE = re.compile(r"Copyright \(c\) \d{4}(?:-\d{4})? (.*)")
 
 
 def _pyproject_license():
@@ -106,14 +108,22 @@ class TestLicenseConsistency:
 
 
 class TestReadmeAttribution:
-    """The public README must keep its License section and link the file."""
+    """The public README must declare the project's own license in its License
+    section (anchored, so upstream-credit license names can't satisfy it)."""
 
-    def test_readme_links_license_and_names_it(self):
+    def test_readme_declares_project_license(self):
+        # Anchor to the markdown link that appears ONLY in the project's own
+        # declaration ("[MIT License](LICENSE)"), not any occurrence of the SPDX
+        # token. README also names licenses in its upstream-credits list ("mflux
+        # and mlx-vlm — MIT"), so a bare `_EXPECTED_SPDX in text` would stay green
+        # after a partial relicense that updated LICENSE + pyproject but forgot
+        # this section. The link welds the token, "License", and the file target
+        # into one project-scoped assertion (subsuming the old link/token checks).
         text = _README.read_text()
         assert "## License" in text, "README dropped its License section"
-        assert "(LICENSE)" in text, "README License section no longer links LICENSE"
-        assert _EXPECTED_SPDX in text, (
-            f"README no longer names the {_EXPECTED_SPDX} license"
+        assert f"[{_EXPECTED_SPDX} License](LICENSE)" in text, (
+            f"README's License section no longer declares the project as "
+            f"{_EXPECTED_SPDX} via a [{_EXPECTED_SPDX} License](LICENSE) link"
         )
 
 
