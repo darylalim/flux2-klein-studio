@@ -6,6 +6,12 @@
 
 Streamlit application for generating and editing images using Black Forest Labs [FLUX.2 Klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) on Apple Silicon with MLX.
 
+<p align="center">
+  <img src="docs/screenshot-light.png" width="49%" alt="FLUX.2 Klein Studio — light theme">
+  <img src="docs/screenshot-dark.png" width="49%" alt="FLUX.2 Klein Studio — dark theme">
+</p>
+<p align="center"><sub>Native light and dark themes (left / right)</sub></p>
+
 ## Features
 
 - Unified generation and editing — text-to-image by default; uploading one or more images switches to editing automatically
@@ -33,7 +39,31 @@ Streamlit application for generating and editing images using Black Forest Labs 
 2. Install dependencies: `uv sync`
 3. Run the application: `uv run streamlit run streamlit_app.py`
 
-Models are downloaded automatically on first use (~8GB per FLUX.2 Klein variant, ~1GB for SmolVLM).
+Models download automatically on first use and are cached locally for reuse: budget roughly 8–10GB per FLUX.2 Klein variant — Distilled and Base are separate downloads, so trying both pulls both — plus ~1GB for SmolVLM.
+
+## Usage
+
+The studio opens with controls on the left and the output on the right.
+
+**Text-to-image** — type a prompt, then press **Enter** or click **Run**. The generated image appears on the right, labeled with the seed used.
+
+**Editing and compositing** — expand **Input image(s)** and upload one or more files (JPG, PNG, or WebP). The app switches to editing automatically — there is no mode to toggle. The width and height sliders snap to the first image's aspect ratio; describe the change and Run. With multiple images you can composite across them — the bundled editing example turns these three inputs into a single scene:
+
+<p align="center">
+  <img src="examples/woman1.webp" width="200" alt="Editing input: person">
+  <img src="examples/cat_window.webp" width="200" alt="Editing input: cat by a window">
+  <img src="examples/bird.webp" width="200" alt="Editing input: bird">
+</p>
+
+**Mode** — choose *Distilled (4 steps)* for fast drafts or *Base (50 steps)* for higher quality.
+
+**Advanced settings** (collapsed by default):
+
+- **Prompt upsampling** — a vision-language model (SmolVLM-500M) rewrites your prompt into a more descriptive one; when editing, it can see your uploaded images. Off by default.
+- **Seed** — *Randomize* is **on** by default, so each Run varies. Turn it off and set a seed for reproducible results.
+- **Width / Height / Number of inference steps / Guidance scale** — fine-tune output size and sampling.
+
+**Examples** — click a prompt example to fill the box, or an editing example to load its prompt together with its bundled input images.
 
 ## Development
 
