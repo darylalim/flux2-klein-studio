@@ -47,12 +47,12 @@ The studio opens with controls on the left and the output on the right.
 
 **Text-to-image** — type a prompt, then press **Enter** or click **Run**. The generated image appears on the right, labeled with the seed used.
 
-**Editing and compositing** — expand **Input image(s)** and upload one or more files (JPG, PNG, or WebP). The app switches to editing automatically — there is no mode to toggle. The width and height sliders snap to the first image's aspect ratio; describe the change and Run. With multiple images you can composite across them — the bundled editing example turns these three inputs into a single scene:
+**Editing and compositing** — expand **Input image(s)** and upload one or more files (JPG, PNG, or WebP). The app switches to editing automatically — there's no generate/edit switch to flip. The width and height sliders snap to the first image's aspect ratio; describe the change and Run. With multiple images you can composite across them — the bundled editing example turns these three inputs into a single scene:
 
 <p align="center">
-  <img src="examples/woman1.webp" width="200" alt="Editing input: person">
-  <img src="examples/cat_window.webp" width="200" alt="Editing input: cat by a window">
-  <img src="examples/bird.webp" width="200" alt="Editing input: bird">
+  <img src="examples/woman1.webp" height="260" alt="Editing input: person">
+  <img src="examples/cat_window.webp" height="260" alt="Editing input: cat by a window">
+  <img src="examples/bird.webp" height="260" alt="Editing input: bird">
 </p>
 
 **Mode** — choose *Distilled (4 steps)* for fast drafts or *Base (50 steps)* for higher quality.

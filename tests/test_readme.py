@@ -34,12 +34,14 @@ _HERO_SCREENSHOTS = ("docs/screenshot-light.png", "docs/screenshot-dark.png")
 def _local_image_refs():
     """Every image ``src`` in README.md, with remote URLs and anchors dropped."""
     text = _README.read_text()
+    # A Markdown image may carry a title — ``![alt](path "title")`` — after the
+    # path, so strip anything past the first whitespace. An HTML ``src`` capture
+    # is already the bare attribute value (and could legitimately contain a
+    # space), so it must NOT be split.
+    refs = [m.strip().split()[0] for m in _MD_IMG_RE.findall(text) if m.strip()]
+    refs += [m.strip() for m in _HTML_IMG_RE.findall(text) if m.strip()]
     local = []
-    for ref in _MD_IMG_RE.findall(text) + _HTML_IMG_RE.findall(text):
-        ref = ref.strip()
-        if not ref:
-            continue
-        ref = ref.split()[0]  # drop an optional Markdown ``"title"`` suffix
+    for ref in refs:
         ref = ref.split("#", 1)[0]  # drop any ``#anchor``
         if ref.startswith(("http://", "https://", "data:", "//")):
             continue  # remote (badges) or inline data URI — not a repo file
@@ -65,10 +67,11 @@ class TestReadmeImages:
 
     def test_hero_screenshots_referenced(self):
         # The light/dark studio pair is the deliverable these tests reflect;
-        # assert each is actually embedded, not merely present on disk.
-        text = _README.read_text()
+        # assert each is embedded via a real image tag (not merely a substring
+        # of the prose), then that it is present on disk.
+        refs = _local_image_refs()
         for asset in _HERO_SCREENSHOTS:
-            assert asset in text, f"README no longer embeds {asset}"
+            assert asset in refs, f"README no longer embeds {asset}"
             assert (_REPO_ROOT / asset).is_file(), f"{asset} is missing on disk"
 
     @_requires_git
