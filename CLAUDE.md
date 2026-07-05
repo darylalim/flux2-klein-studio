@@ -59,6 +59,7 @@ uv run pytest tests/test_release.py        # Run the release-workflow test file
 uv run pytest tests/test_workflows.py      # Run the cross-workflow invariant test file
 uv run pytest tests/test_secrets.py        # Run the secret-leak guard test file
 uv run pytest tests/test_license.py        # Run the license-consistency test file
+uv run pytest tests/test_readme.py         # Run the README-asset guard test file
 ```
 
 Ruff is configured in `pyproject.toml` (`[tool.ruff.lint]`: rule sets `E`, `F`, `I`, `UP`, `B`, `C4`, `SIM`); line length (`E501`) is delegated to the formatter, not linted.
