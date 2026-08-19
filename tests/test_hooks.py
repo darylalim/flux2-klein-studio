@@ -245,7 +245,7 @@ class TestGuardPaths:
 
 @_requires_shell
 class TestRuffFormatHook:
-    """PostToolUse: format + lint-fix edited in-project Python files, else no-op."""
+    """PostToolUse: format edited in-project .py/.md files (lint-fix .py), else no-op."""
 
     def test_formats_python_file_scoped_to_that_file(self, tmp_path):
         proj = _project(tmp_path)
@@ -259,29 +259,51 @@ class TestRuffFormatHook:
         assert "ruff check --fix" in logged
         assert str(py) in logged  # ruff is scoped to the edited file, not the repo
 
-    def test_skips_non_python_file(self, tmp_path):
+    def test_formats_markdown_without_lint_fixing_it(self, tmp_path):
+        # `ruff format` (>=0.16) formats Python fenced in Markdown and CI checks
+        # the repo root, so docs are in scope here or the two would disagree.
+        # `ruff check` has no Markdown support, so the lint-fix pass must not run.
         proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
         md = proj / "README.md"
         md.write_text("# hi\n")
         result = _run_hook("ruff-format.sh", md, project_dir=proj, env=env)
         assert result.returncode == 0
-        assert log.read_text() == ""  # uv never invoked
+        logged = log.read_text()
+        assert "ruff format" in logged
+        assert str(md) in logged  # scoped to the edited file, not the repo
+        assert "ruff check" not in logged
 
-    def test_skips_nonexistent_python_file(self, tmp_path):
+    @pytest.mark.parametrize(
+        "name",
+        # "README.MD" is deliberate: ruff recognizes Markdown only by a
+        # lowercase `.md` and parses any other extension as Python source, so a
+        # mis-cased doc must no-op rather than be handed to ruff to misparse.
+        ["notes.txt", "settings.json", "pyproject.toml", "README.MD"],
+    )
+    def test_skips_file_ruff_does_not_format(self, name, tmp_path):
         proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
-        result = _run_hook(
-            "ruff-format.sh", proj / "ghost.py", project_dir=proj, env=env
-        )
+        other = proj / name
+        other.write_text("# hi\n")
+        result = _run_hook("ruff-format.sh", other, project_dir=proj, env=env)
+        assert result.returncode == 0
+        assert log.read_text() == ""  # uv never invoked
+
+    @pytest.mark.parametrize("name", ["ghost.py", "ghost.md"])
+    def test_skips_nonexistent_file(self, name, tmp_path):
+        proj = _project(tmp_path)
+        env, log = _uv_stub_env(tmp_path)
+        result = _run_hook("ruff-format.sh", proj / name, project_dir=proj, env=env)
         assert result.returncode == 0
         assert log.read_text() == ""
 
-    def test_skips_file_outside_the_project(self, tmp_path):
-        # An edit to a .py file outside the repo must not be reformatted.
+    @pytest.mark.parametrize("name", ["outside.py", "outside.md"])
+    def test_skips_file_outside_the_project(self, name, tmp_path):
+        # An edit to a formattable file outside the repo must not be reformatted.
         proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
-        outside = tmp_path / "outside.py"
+        outside = tmp_path / name
         outside.write_text("x=1\n")
         result = _run_hook("ruff-format.sh", outside, project_dir=proj, env=env)
         assert result.returncode == 0

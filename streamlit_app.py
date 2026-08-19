@@ -139,7 +139,10 @@ def upsample_prompt(prompt, image_list: list | None = None):
             model,
             processor,
             formatted_prompt,
-            image=image_list if image_list else None,  # ty: ignore[invalid-argument-type]  # mlx_vlm types image as str|list[str] (no Optional) but accepts None/PIL Images at runtime
+            # mlx_vlm types `image` as str | list[str] | None; it also accepts
+            # PIL Images at runtime, which ty cannot see here because
+            # image_list is an untyped list.
+            image=image_list if image_list else None,
             max_tokens=150,
             temperature=0.7,
             top_p=0.9,

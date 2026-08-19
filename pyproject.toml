@@ -26,13 +26,17 @@ Changelog = "https://github.com/darylalim/flux2-klein-studio/releases"
 # PEP 440 comma range, and would silently fall back to latest. Bump this and
 # re-run `uv lock` together.
 [tool.uv]
-required-version = "==0.12.4"
+required-version = "==0.12.5"
 
 [dependency-groups]
 dev = [
     "pytest",
     "pyyaml>=6.0.3",
-    "ruff",
+    # >=0.16 is where `ruff format` started formatting Python fenced in
+    # Markdown. CI's `ruff format --check .` and .claude/hooks/ruff-format.sh
+    # both depend on that, so an older ruff would silently reopen the
+    # local/CI divergence the hook exists to close.
+    "ruff>=0.16",
     "ty",
 ]
 
