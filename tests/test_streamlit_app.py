@@ -32,10 +32,15 @@ def _make_mock_model():
 
 
 class _MockGenerationResult:
-    """Mock mlx-vlm GenerationResult with a .text attribute."""
+    """Mock mlx-vlm GenerationResult with .text and .finish_reason.
 
-    def __init__(self, text="enhanced prompt"):
+    finish_reason is real: mlx-vlm sets "stop" on a natural end and "length"
+    when max_tokens cut generation off, and upsample_prompt branches on it.
+    """
+
+    def __init__(self, text="enhanced prompt", finish_reason="stop"):
         self.text = text
+        self.finish_reason = finish_reason
 
 
 def _passthrough_cache_resource(func=None, **_kwargs):
@@ -881,6 +886,47 @@ class TestUpsamplePrompt:
             mock_gen.return_value = _MockGenerationResult("  A majestic feline  ")
             result = streamlit_app.upsample_prompt("a cat")
             assert result == "A majestic feline"
+
+    def test_truncated_generation_returns_original(self):
+        """A capped run is a mid-sentence fragment, not a usable FLUX prompt."""
+        mock_model = _make_mock_model()
+        mock_vlm = _make_mock_vlm()
+        streamlit_app, _, _ = _reload_app(mock_model, mock_vlm=mock_vlm)
+        with (
+            patch("streamlit_app.load_vlm") as mock_load,
+            patch("streamlit_app.load_config") as mock_lc,
+            patch("streamlit_app.apply_chat_template") as mock_chat,
+            patch("streamlit_app.vlm_generate") as mock_gen,
+        ):
+            mock_vlm_model, mock_vlm_processor, mock_vlm_config = mock_vlm
+            mock_load.return_value = (mock_vlm_model, mock_vlm_processor)
+            mock_lc.return_value = mock_vlm_config
+            mock_chat.return_value = "formatted prompt"
+            mock_gen.return_value = _MockGenerationResult(
+                "A majestic feline sitting on a windowsill in the",
+                finish_reason="length",
+            )
+            assert streamlit_app.upsample_prompt("a cat") == "a cat"
+
+    def test_natural_stop_is_kept(self):
+        """The guard must not reject a normal completion."""
+        mock_model = _make_mock_model()
+        mock_vlm = _make_mock_vlm()
+        streamlit_app, _, _ = _reload_app(mock_model, mock_vlm=mock_vlm)
+        with (
+            patch("streamlit_app.load_vlm") as mock_load,
+            patch("streamlit_app.load_config") as mock_lc,
+            patch("streamlit_app.apply_chat_template") as mock_chat,
+            patch("streamlit_app.vlm_generate") as mock_gen,
+        ):
+            mock_vlm_model, mock_vlm_processor, mock_vlm_config = mock_vlm
+            mock_load.return_value = (mock_vlm_model, mock_vlm_processor)
+            mock_lc.return_value = mock_vlm_config
+            mock_chat.return_value = "formatted prompt"
+            mock_gen.return_value = _MockGenerationResult(
+                "A majestic feline", finish_reason="stop"
+            )
+            assert streamlit_app.upsample_prompt("a cat") == "A majestic feline"
 
     def test_empty_output_returns_original(self):
         mock_model = _make_mock_model()

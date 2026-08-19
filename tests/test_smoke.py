@@ -107,3 +107,26 @@ def test_prompt_upsampling_returns_usable_text(app):
     # markers (<|box_start|>, <|object_ref_start|>, ...), which are ordinary
     # special tokens -- hence skip_special_tokens=True in upsample_prompt.
     assert not re.search(r"<\|[a-z_]+\|>", enhanced), enhanced
+
+
+def test_prompt_upsampling_sees_multiple_images(app):
+    """The multi-image VLM path, unmocked.
+
+    Every other VLM test patches ``vlm_generate``, so nothing else proves that
+    Qwen3-VL's processor accepts the list of PIL Images the UI actually builds
+    (mlx-vlm annotates ``image`` as ``str | list[str] | None``), or that
+    multi-image prefill succeeds at all. Same reasoning as
+    ``test_edit_accepts_the_pil_images_the_ui_builds`` on the mflux side.
+    """
+    request, paths = app.EDIT_EXAMPLES[0]
+    images = [Image.open(p) for p in paths]
+    sizes = [i.size for i in images]
+
+    enhanced = app.upsample_prompt(request, image_list=images)
+
+    assert isinstance(enhanced, str)
+    assert enhanced.strip()
+    # Grounding markers must not reach the FLUX prompt.
+    assert not re.search(r"<\|[a-z_]+\|>", enhanced), enhanced
+    # _vlm_images downscales copies; infer() still needs the originals.
+    assert [i.size for i in images] == sizes

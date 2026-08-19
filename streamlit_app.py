@@ -31,6 +31,11 @@ VLM_MODEL_ID = "mlx-community/Qwen3-VL-2B-Instruct-8bit"
 # across 768/1024/full-res on the bundled 3-image example.
 VLM_MAX_IMAGE_SIZE = 768
 
+# Generation cap. Named so the guard below cannot drift from the kwarg: a
+# run that stops because it hit the cap is a mid-sentence fragment, and
+# that is a worse FLUX prompt than the user's own words.
+VLM_MAX_TOKENS = 256
+
 # The app ships exactly one model: the distilled FLUX.2 Klein 4B, pre-quantized
 # to 8-bit by mflux itself (its safetensors carry mflux's own
 # quantization_level=8 metadata), so loading needs no local quantization pass.
@@ -168,7 +173,7 @@ def upsample_prompt(prompt, image_list: list | None = None):
             # PIL Images at runtime, which ty cannot see here because
             # image_list is an untyped list.
             image=_vlm_images(image_list),
-            max_tokens=256,
+            max_tokens=VLM_MAX_TOKENS,
             # Qwen3-VL's own generation_config.json asks for top_p 0.8 /
             # top_k 20; mlx-vlm leaves top_k off unless told otherwise, which
             # widens the tail well past what the model was tuned for.
@@ -185,6 +190,10 @@ def upsample_prompt(prompt, image_list: list | None = None):
             # prompt handed to FLUX.
             skip_special_tokens=True,
         )
+        # mlx-vlm reports "length" when the cap cut generation off rather
+        # than the model stopping on its own; that text is a fragment.
+        if result.finish_reason == "length":
+            return prompt
         enhanced = result.text.strip()
         return enhanced or prompt
     except Exception:
