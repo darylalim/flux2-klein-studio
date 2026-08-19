@@ -30,6 +30,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
+        # No `version:` on purpose. setup-uv reads pyproject's
+        # [tool.uv] required-version when this input is empty, so the uv version
+        # has one source of truth shared with local development. Hardcoding it
+        # here would shadow that pin and let the two drift.
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true # caches the uv cache dir, keyed on uv.lock

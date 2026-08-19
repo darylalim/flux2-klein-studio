@@ -17,6 +17,17 @@ Homepage = "https://github.com/darylalim/flux2-klein-studio"
 Repository = "https://github.com/darylalim/flux2-klein-studio"
 Changelog = "https://github.com/darylalim/flux2-klein-studio/releases"
 
+# Pin the uv that writes and validates uv.lock. Without this, CI's
+# astral-sh/setup-uv installs whatever uv is latest, and a uv whose marker
+# normalization differs from the one that wrote the lock makes `uv sync
+# --locked` fail on a lockfile nobody touched. setup-uv reads this key when its
+# `version:` input is empty, so this is the single source of truth for both
+# local and CI. Must be an `==` pin: setup-uv strips `==` but cannot parse a
+# PEP 440 comma range, and would silently fall back to latest. Bump this and
+# re-run `uv lock` together.
+[tool.uv]
+required-version = "==0.12.4"
+
 [dependency-groups]
 dev = [
     "pytest",
