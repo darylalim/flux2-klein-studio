@@ -95,8 +95,9 @@ def test_progress_callback_fires_and_is_deregistered(app):
 
 
 def test_prompt_upsampling_returns_usable_text(app):
-    """SmolVLM is the third real dependency and equally mocked elsewhere."""
+    """Qwen3-VL is the third real dependency and equally mocked elsewhere."""
     enhanced = app.upsample_prompt("a cat")
     assert isinstance(enhanced, str)
     assert enhanced.strip()
-    assert "<end_of_utterance>" not in enhanced  # stripped, per mlx-vlm's output
+    # Qwen3-VL's <|im_end|> is a real stop id, consumed before detokenization.
+    assert "<|im_end|>" not in enhanced

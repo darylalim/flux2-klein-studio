@@ -21,7 +21,7 @@ MAX_IMAGE_SIZE = 1024
 # between states (the result image then sizes to its own content).
 OUTPUT_FRAME_HEIGHT = 420
 
-VLM_MODEL_ID = "mlx-community/SmolVLM-500M-Instruct-bf16"
+VLM_MODEL_ID = "mlx-community/Qwen3-VL-2B-Instruct-8bit"
 
 # The app ships exactly one model: the distilled FLUX.2 Klein 4B, pre-quantized
 # to 8-bit by mflux itself (its safetensors carry mflux's own
@@ -76,7 +76,7 @@ def _get_edit_model():
     )
 
 
-@st.cache_resource(show_spinner="Loading SmolVLM prompt enhancer…")
+@st.cache_resource(show_spinner="Loading Qwen3-VL prompt enhancer…")
 def _get_vlm():
     model, processor = load_vlm(VLM_MODEL_ID)
     config = load_config(VLM_MODEL_ID)
@@ -91,8 +91,9 @@ UPSAMPLE_PROMPT_TEXT_ONLY = (
     "Guidelines:\n"
     "- Add concrete visual specifics: textures, materials, lighting, "
     "shadows, and spatial relationships.\n"
-    "- Put ALL text that should appear in the image in quotation marks "
-    "(signs, labels, screens, etc.) - without quotes, the model generates "
+    "- Only include rendered text the user explicitly asked for; never "
+    "invent signs, labels, captions, or titles. When the user does ask for "
+    "text, put it in quotation marks - without quotes, the model generates "
     "gibberish.\n\n"
     "Output only the revised prompt and nothing else."
 )
@@ -108,8 +109,8 @@ UPSAMPLE_PROMPT_WITH_IMAGES = (
     "composition)\n"
     "- Turn negatives into positives "
     '("don\'t change X" becomes "keep X")\n'
-    '- Make abstractions concrete ("futuristic" becomes '
-    '"glowing cyan neon, metallic panels")\n\n'
+    "- Replace abstract adjectives with the specific materials, colours "
+    "and lighting they imply\n\n"
     "Output only the final instruction in plain text and nothing else."
 )
 
@@ -124,7 +125,7 @@ def upsample_prompt(prompt, image_list: list | None = None):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ]
-        # apply_chat_template returns a str at runtime for SmolVLM, though the
+        # apply_chat_template returns a str at runtime for Qwen3-VL, though the
         # stub types it as a broader union.
         formatted_prompt = cast(
             str,
@@ -143,11 +144,14 @@ def upsample_prompt(prompt, image_list: list | None = None):
             # PIL Images at runtime, which ty cannot see here because
             # image_list is an untyped list.
             image=image_list if image_list else None,
-            max_tokens=150,
+            max_tokens=256,
             temperature=0.7,
             top_p=0.9,
+            # Qwen3-VL-2B can fall into a repetition loop on multi-image
+            # editing requests; 1.05 cleared it in every measured case.
+            repetition_penalty=1.05,
         )
-        enhanced = result.text.replace("<end_of_utterance>", "").strip()
+        enhanced = result.text.strip()
         return enhanced or prompt
     except Exception:
         st.warning(

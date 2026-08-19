@@ -158,8 +158,8 @@ class TestSecretDetector:
         benign = (
             b"https://huggingface.co/black-forest-labs/FLUX.2-klein-4B",
             b"https://github.com/darylalim/flux2-klein-studio",
-            b"max_tokens=150",
-            b"test_strips_end_of_utterance_token",
+            b"max_tokens=256",
+            b"test_extracts_and_strips_output",
         )
         for text in benign:
             assert not any(rx.search(text) for _, rx in _SECRET_PATTERNS), text

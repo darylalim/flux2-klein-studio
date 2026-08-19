@@ -137,7 +137,7 @@ class TestConstants:
     def test_vlm_model_id(self):
         import streamlit_app
 
-        assert streamlit_app.VLM_MODEL_ID == "mlx-community/SmolVLM-500M-Instruct-bf16"
+        assert streamlit_app.VLM_MODEL_ID == "mlx-community/Qwen3-VL-2B-Instruct-8bit"
 
     def test_model_repo_is_the_8bit_build(self):
         """The app is pinned to the pre-quantized 8-bit distilled repo.
@@ -657,10 +657,8 @@ class TestVLMInit:
             mock_load.return_value = (mock_vlm_model, mock_vlm_processor)
             mock_lc.return_value = mock_vlm_config
             streamlit_app._get_vlm()
-            mock_load.assert_called_once_with(
-                "mlx-community/SmolVLM-500M-Instruct-bf16"
-            )
-            mock_lc.assert_called_once_with("mlx-community/SmolVLM-500M-Instruct-bf16")
+            mock_load.assert_called_once_with("mlx-community/Qwen3-VL-2B-Instruct-8bit")
+            mock_lc.assert_called_once_with("mlx-community/Qwen3-VL-2B-Instruct-8bit")
 
     def test_vlm_returns_triple(self):
         mock_model = _make_mock_model()
@@ -685,8 +683,9 @@ EXPECTED_SYSTEM_PROMPT = (
     "Guidelines:\n"
     "- Add concrete visual specifics: textures, materials, lighting, "
     "shadows, and spatial relationships.\n"
-    "- Put ALL text that should appear in the image in quotation marks "
-    "(signs, labels, screens, etc.) - without quotes, the model generates "
+    "- Only include rendered text the user explicitly asked for; never "
+    "invent signs, labels, captions, or titles. When the user does ask for "
+    "text, put it in quotation marks - without quotes, the model generates "
     "gibberish.\n\n"
     "Output only the revised prompt and nothing else."
 )
@@ -702,8 +701,8 @@ EXPECTED_SYSTEM_PROMPT_WITH_IMAGES = (
     "composition)\n"
     "- Turn negatives into positives "
     '("don\'t change X" becomes "keep X")\n'
-    '- Make abstractions concrete ("futuristic" becomes '
-    '"glowing cyan neon, metallic panels")\n\n'
+    "- Replace abstract adjectives with the specific materials, colours "
+    "and lighting they imply\n\n"
     "Output only the final instruction in plain text and nothing else."
 )
 
@@ -818,9 +817,10 @@ class TestUpsamplePrompt:
             mock_gen.return_value = _MockGenerationResult("enhanced prompt")
             streamlit_app.upsample_prompt("a cat")
             call_kwargs = mock_gen.call_args[1]
-            assert call_kwargs["max_tokens"] == 150
+            assert call_kwargs["max_tokens"] == 256
             assert call_kwargs["temperature"] == 0.7
             assert call_kwargs["top_p"] == 0.9
+            assert call_kwargs["repetition_penalty"] == 1.05
 
     def test_extracts_and_strips_output(self):
         mock_model = _make_mock_model()
@@ -837,46 +837,6 @@ class TestUpsamplePrompt:
             mock_lc.return_value = mock_vlm_config
             mock_chat.return_value = "formatted prompt"
             mock_gen.return_value = _MockGenerationResult("  A majestic feline  ")
-            result = streamlit_app.upsample_prompt("a cat")
-            assert result == "A majestic feline"
-
-    def test_strips_end_of_utterance_token(self):
-        mock_model = _make_mock_model()
-        mock_vlm = _make_mock_vlm()
-        streamlit_app, _, _ = _reload_app(mock_model, mock_vlm=mock_vlm)
-        with (
-            patch("streamlit_app.load_vlm") as mock_load,
-            patch("streamlit_app.load_config") as mock_lc,
-            patch("streamlit_app.apply_chat_template") as mock_chat,
-            patch("streamlit_app.vlm_generate") as mock_gen,
-        ):
-            mock_vlm_model, mock_vlm_processor, mock_vlm_config = mock_vlm
-            mock_load.return_value = (mock_vlm_model, mock_vlm_processor)
-            mock_lc.return_value = mock_vlm_config
-            mock_chat.return_value = "formatted prompt"
-            mock_gen.return_value = _MockGenerationResult(
-                "A majestic feline<end_of_utterance>"
-            )
-            result = streamlit_app.upsample_prompt("a cat")
-            assert result == "A majestic feline"
-
-    def test_strips_end_of_utterance_token_mid_text(self):
-        mock_model = _make_mock_model()
-        mock_vlm = _make_mock_vlm()
-        streamlit_app, _, _ = _reload_app(mock_model, mock_vlm=mock_vlm)
-        with (
-            patch("streamlit_app.load_vlm") as mock_load,
-            patch("streamlit_app.load_config") as mock_lc,
-            patch("streamlit_app.apply_chat_template") as mock_chat,
-            patch("streamlit_app.vlm_generate") as mock_gen,
-        ):
-            mock_vlm_model, mock_vlm_processor, mock_vlm_config = mock_vlm
-            mock_load.return_value = (mock_vlm_model, mock_vlm_processor)
-            mock_lc.return_value = mock_vlm_config
-            mock_chat.return_value = "formatted prompt"
-            mock_gen.return_value = _MockGenerationResult(
-                "A majestic<end_of_utterance> feline"
-            )
             result = streamlit_app.upsample_prompt("a cat")
             assert result == "A majestic feline"
 
