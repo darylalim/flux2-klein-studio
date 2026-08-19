@@ -58,9 +58,12 @@ EDIT_EXAMPLES = [
 ]
 
 
-# model_path picks the weights; model_config is still required alongside it
-# because mflux builds the architecture from its transformer/text-encoder
-# overrides, not from anything in the repo.
+# model_path picks the weights; model_config supplies the architecture (its
+# transformer/text-encoder overrides), which mflux does not read from the repo.
+# Passing it is redundant *today* — mflux itself defaults to
+# `model_config or ModelConfig.flux2_klein_4b()` — but it is stated explicitly so
+# the repo/architecture pairing is visible at the call site, and it becomes
+# load-bearing the moment MODEL_REPO points at anything but a 4b build.
 @st.cache_resource(show_spinner="Loading FLUX.2 Klein (8-bit)…")
 def _get_model():
     return Flux2Klein(model_path=MODEL_REPO, model_config=ModelConfig.flux2_klein_4b())

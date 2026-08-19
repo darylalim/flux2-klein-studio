@@ -226,17 +226,18 @@ class TestThemeConfig:
 class TestModelLoading:
     def test_model_created_from_8bit_repo(self):
         mock_model = _make_mock_model()
-        streamlit_app, mock_cls, _ = _reload_app(mock_model)
+        streamlit_app, _, _ = _reload_app(mock_model)
         with (
             patch("streamlit_app.Flux2Klein", return_value=mock_model) as mock_klein,
             patch("streamlit_app.ModelConfig") as mock_config,
         ):
             mock_config.flux2_klein_4b.return_value = "distilled_config"
             streamlit_app._get_model()
-            # model_config is not redundant next to model_path: mflux builds the
-            # architecture from its transformer/text-encoder overrides.
+            # Both kwargs are asserted because the call site states both. mflux
+            # would default model_config to the same value, so this pins the
+            # call shape, not a correctness requirement.
             mock_klein.assert_called_once_with(
-                model_path="mlx-community/flux2-klein-4b-8bit",
+                model_path=streamlit_app.MODEL_REPO,
                 model_config="distilled_config",
             )
 
@@ -250,7 +251,7 @@ class TestModelLoading:
             mock_config.flux2_klein_4b.return_value = "distilled_config"
             streamlit_app._get_edit_model()
             mock_edit.assert_called_once_with(
-                model_path="mlx-community/flux2-klein-4b-8bit",
+                model_path=streamlit_app.MODEL_REPO,
                 model_config="distilled_config",
             )
 
@@ -394,8 +395,8 @@ class TestInfer:
         """The mode parameter is gone; a stale caller must fail loudly."""
         import inspect
 
-        mock_model = _make_mock_model()
-        streamlit_app, _, _ = _reload_app(mock_model)
+        import streamlit_app
+
         assert "mode" not in inspect.signature(streamlit_app.infer).parameters
 
     def test_image_list_uses_edit_model(self):
@@ -472,6 +473,23 @@ class TestInfer:
             callback.assert_any_call(2, 4)
             callback.assert_any_call(3, 4)
             callback.assert_any_call(4, 4)
+
+    def test_progress_callback_uses_config_not_the_default_step_count(self):
+        # Every other reporter test drives 4 steps, which equals DEFAULT_STEPS —
+        # so a reporter that ignored config and reported DEFAULT_STEPS would pass
+        # them all. Drive a non-default total to pin config.num_inference_steps.
+        mock_model = _make_mock_model()
+        streamlit_app, _, _ = _reload_app(mock_model)
+        with patch("streamlit_app.Flux2Klein", return_value=mock_model):
+            callback = MagicMock()
+            streamlit_app.infer(
+                "a cat", num_inference_steps=50, progress_callback=callback
+            )
+            registered = mock_model.callbacks.register.call_args[0][0]
+            mock_config = MagicMock()
+            mock_config.num_inference_steps = 50
+            registered.call_in_loop(0, 42, "a cat", None, mock_config, None)
+            callback.assert_called_once_with(1, 50)
 
     def test_progress_callback_with_image_list(self):
         mock_model = _make_mock_model()
@@ -1127,9 +1145,13 @@ class TestStreamlitApp:
 
     def test_no_mode_control_rendered(self):
         # The base variant was dropped, so there is nothing to switch between.
+        # Use the typed property, NOT at.get("segmented_control"): AppTest names
+        # the node "button_group", so the get() form returns [] whether or not a
+        # segmented control is on the page — a guard that can never fail.
         with _app_test() as app:
             at = app.run(timeout=10)
-            assert len(at.get("segmented_control")) == 0
+            assert len(at.segmented_control) == 0
+            assert len(at.get("button_group")) == 0
 
     def test_uploader_always_present(self):
         with _app_test() as app:
@@ -1175,10 +1197,20 @@ class TestStreamlitApp:
 
     def test_steps_slider_still_allows_long_runs(self):
         # Losing the Base preset must not lose the ability to run many steps.
-        with _app_test() as app:
+        # Assert the value reaches generate_image() — merely reading the slider
+        # back would only prove Streamlit stores what you set it to.
+        mock_txt2img = _make_mock_model()
+        mock_edit = _make_mock_model()
+        with _patched_models(mock_txt2img, mock_edit) as (app, _generate):
             at = app.run(timeout=10)
+            assert at.slider(key="steps_slider").proto.max >= 50
             at.slider(key="steps_slider").set_value(50).run(timeout=10)
-            assert at.slider(key="steps_slider").value == 50
+            at.text_input(key="prompt_input").set_value("a cat")
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            assert (
+                mock_txt2img.generate_image.call_args.kwargs["num_inference_steps"]
+                == 50
+            )
 
     def test_advanced_sliders_render_while_collapsed(self):
         # The Advanced settings expander is collapsed by default, yet its four

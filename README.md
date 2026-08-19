@@ -15,7 +15,7 @@ Streamlit application for generating and editing images using Black Forest Labs 
 ## Features
 
 - Unified generation and editing — text-to-image by default; uploading one or more images switches to editing automatically
-- 8-bit quantized weights — 8.6GB to download and hold in memory instead of 16GB, with no local quantization pass at load
+- 8-bit quantized weights — an 8.6GB download instead of 16GB, with no local quantization pass at load (see Requirements for the memory picture, which is a separate question from download size)
 - Native Apple Silicon performance via MLX — inference runs on MLX, not PyTorch
 - Two-column studio layout: controls on the left, generated image on the right
 - Enter to run — the prompt row is a borderless form, so pressing Enter submits the run
@@ -32,6 +32,7 @@ Streamlit application for generating and editing images using Black Forest Labs 
 
 - Apple Silicon Mac (M1+)
 - Python 3.12+
+- **16GB unified memory minimum; 24GB+ comfortable.** Weight size understates what a run actually needs: with only the text-to-image model resident, a 1024×1024 generation measured a 24GB process footprint against 8.6GB of weights. Most of the excess is MLX's Metal buffer cache — retained for reuse and reclaimable under pressure rather than leaked — but it is real memory while the session is warm. Generating *and* editing in one session keeps two independent weight copies resident, since they are separate cached models.
 
 ## Setup
 
