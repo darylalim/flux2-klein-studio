@@ -4,14 +4,17 @@ Every other test in this suite patches ``Flux2Klein``/``Flux2KleinEdit`` with a
 MagicMock, so an mflux API break sails through the whole green suite. These are
 the only tests that exercise the real stack end to end, which makes them the
 pre-release gate — and also why they are deselected by default (see
-``[tool.pytest.ini_options]`` in ``pyproject.toml``): they need ~8.6GB of weights
-on disk and Apple Silicon, neither of which CI has.
+``[tool.pytest.ini_options]`` in ``pyproject.toml``): they need ~11.3GB of weights
+on disk (8.6GB FLUX.2 Klein + 2.7GB Qwen3-VL) and Apple Silicon, neither of
+which CI has.
 
     uv run pytest -m smoke            # all of them
     uv run pytest -m smoke -k text    # just text-to-image
 
 Weights come from the HF cache; the first run downloads them.
 """
+
+import re
 
 import pytest
 from PIL import Image
@@ -99,5 +102,8 @@ def test_prompt_upsampling_returns_usable_text(app):
     enhanced = app.upsample_prompt("a cat")
     assert isinstance(enhanced, str)
     assert enhanced.strip()
-    # Qwen3-VL's <|im_end|> is a real stop id, consumed before detokenization.
-    assert "<|im_end|>" not in enhanced
+    # <|im_end|> is a stop id consumed before detokenization, so asserting on
+    # it can never fail. The tokens that *can* leak are Qwen3-VL's grounding
+    # markers (<|box_start|>, <|object_ref_start|>, ...), which are ordinary
+    # special tokens -- hence skip_special_tokens=True in upsample_prompt.
+    assert not re.search(r"<\|[a-z_]+\|>", enhanced), enhanced

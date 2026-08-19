@@ -707,6 +707,34 @@ EXPECTED_SYSTEM_PROMPT_WITH_IMAGES = (
 )
 
 
+class TestVlmImages:
+    def test_returns_none_without_images(self):
+        import streamlit_app
+
+        assert streamlit_app._vlm_images(None) is None
+        assert streamlit_app._vlm_images([]) is None
+
+    def test_downscales_to_the_cap(self):
+        import streamlit_app
+
+        out = streamlit_app._vlm_images([Image.new("RGB", (4032, 3024))])
+        assert max(out[0].size) == streamlit_app.VLM_MAX_IMAGE_SIZE
+
+    def test_leaves_small_images_alone(self):
+        import streamlit_app
+
+        out = streamlit_app._vlm_images([Image.new("RGB", (512, 768))])
+        assert out[0].size == (512, 768)
+
+    def test_does_not_mutate_the_originals(self):
+        """infer() passes the same list to mflux; thumbnail() resizes in place."""
+        import streamlit_app
+
+        original = Image.new("RGB", (4032, 3024))
+        streamlit_app._vlm_images([original])
+        assert original.size == (4032, 3024)
+
+
 class TestUpsamplePrompt:
     def test_chat_message_format_text_only(self):
         mock_model = _make_mock_model()
@@ -779,7 +807,13 @@ class TestUpsamplePrompt:
             mock_gen.return_value = _MockGenerationResult("enhanced prompt")
             streamlit_app.upsample_prompt("edit", image_list=images)
             call_kwargs = mock_gen.call_args[1]
-            assert call_kwargs["image"] is images
+            passed = call_kwargs["image"]
+            # Downscaled copies, never the originals: infer() still
+            # hands the full-resolution images to mflux.
+            assert passed is not images
+            assert len(passed) == len(images)
+            assert all(a is not b for a, b in zip(passed, images, strict=True))
+            assert all(max(i.size) <= streamlit_app.VLM_MAX_IMAGE_SIZE for i in passed)
 
     def test_no_images_passed_for_text_only(self):
         mock_model = _make_mock_model()
@@ -819,8 +853,16 @@ class TestUpsamplePrompt:
             call_kwargs = mock_gen.call_args[1]
             assert call_kwargs["max_tokens"] == 256
             assert call_kwargs["temperature"] == 0.7
-            assert call_kwargs["top_p"] == 0.9
+            # Qwen3-VL's shipped generation_config values, not SmolVLM's.
+            assert call_kwargs["top_p"] == 0.8
+            assert call_kwargs["top_k"] == 20
             assert call_kwargs["repetition_penalty"] == 1.05
+            # Explicit: mlx-vlm's default window is 20 tokens, too short for
+            # a clause-length loop.
+            assert call_kwargs["repetition_context_size"] == 64
+            # Grounding tokens are not stop ids and would decode into the
+            # prompt handed to FLUX.
+            assert call_kwargs["skip_special_tokens"] is True
 
     def test_extracts_and_strips_output(self):
         mock_model = _make_mock_model()
@@ -980,7 +1022,13 @@ class TestResolvePrompt:
             )
             assert was_enhanced is True
             call_kwargs = mock_gen.call_args[1]
-            assert call_kwargs["image"] is images
+            passed = call_kwargs["image"]
+            # Downscaled copies, never the originals: infer() still
+            # hands the full-resolution images to mflux.
+            assert passed is not images
+            assert len(passed) == len(images)
+            assert all(a is not b for a, b in zip(passed, images, strict=True))
+            assert all(max(i.size) <= streamlit_app.VLM_MAX_IMAGE_SIZE for i in passed)
 
     def test_falls_back_on_vlm_error(self):
         mock_model = _make_mock_model()

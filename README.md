@@ -40,7 +40,7 @@ Streamlit application for generating and editing images using Black Forest Labs 
 2. Install dependencies: `uv sync`
 3. Run the application: `uv run streamlit run streamlit_app.py`
 
-Models download automatically on first use and are cached locally for reuse: **~8.6GB** for the 8-bit FLUX.2 Klein weights, plus ~2.5GB for Qwen3-VL if you turn prompt upsampling on. Text-to-image and editing share the same download.
+Models download automatically on first use and are cached locally for reuse: **~8.6GB** for the 8-bit FLUX.2 Klein weights, plus ~2.7GB for Qwen3-VL if you turn prompt upsampling on. Text-to-image and editing share the same download.
 
 The app loads [`mlx-community/flux2-klein-4b-8bit`](https://huggingface.co/mlx-community/flux2-klein-4b-8bit) — the distilled FLUX.2 Klein 4B pre-quantized to 8-bit by mflux, which is roughly half the 16GB the bf16 original would pull. The 50-step base variant has no pre-quantized build published, so the app does not offer it.
 
