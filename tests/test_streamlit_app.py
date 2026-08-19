@@ -134,39 +134,37 @@ class TestConstants:
 
         assert streamlit_app.VLM_MODEL_ID == "mlx-community/SmolVLM-500M-Instruct-bf16"
 
-    def test_mode_defaults(self):
+    def test_model_repo_is_the_8bit_build(self):
+        """The app is pinned to the pre-quantized 8-bit distilled repo.
+
+        Dropping the "-8bit" suffix would silently fall back to a 16GB bf16
+        download and double resident memory, with no other visible symptom.
+        """
         import streamlit_app
 
-        assert streamlit_app.MODE_DEFAULTS == {
-            "Fast": {"steps": 4, "cfg": 1.0},
-            "Quality": {"steps": 50, "cfg": 4.0},
-        }
+        assert streamlit_app.MODEL_REPO == "mlx-community/flux2-klein-4b-8bit"
 
-    def test_models_maps_to_getters(self):
+    def test_generation_defaults(self):
         import streamlit_app
 
-        assert streamlit_app.MODELS["Fast"] is streamlit_app._get_model_distilled
-        assert streamlit_app.MODELS["Quality"] is streamlit_app._get_model_base
+        assert streamlit_app.DEFAULT_STEPS == 4
+        assert streamlit_app.DEFAULT_GUIDANCE == 1.0
 
-    def test_edit_models_maps_to_getters(self):
+    def test_no_mode_tables_remain(self):
+        """The base variant was dropped; no mode plumbing should linger."""
         import streamlit_app
 
-        assert (
-            streamlit_app.EDIT_MODELS["Fast"] is streamlit_app._get_edit_model_distilled
-        )
-        assert (
-            streamlit_app.EDIT_MODELS["Quality"] is streamlit_app._get_edit_model_base
-        )
-
-    def test_mode_defaults_keys_match_models(self):
-        import streamlit_app
-
-        assert set(streamlit_app.MODE_DEFAULTS) == set(streamlit_app.MODELS)
-
-    def test_mode_defaults_keys_match_edit_models(self):
-        import streamlit_app
-
-        assert set(streamlit_app.MODE_DEFAULTS) == set(streamlit_app.EDIT_MODELS)
+        for removed in (
+            "MODE_DEFAULTS",
+            "MODE_LABELS",
+            "LABEL_TO_MODE",
+            "MODE_LABEL_LIST",
+            "MODELS",
+            "EDIT_MODELS",
+            "_get_model_base",
+            "_get_edit_model_base",
+        ):
+            assert not hasattr(streamlit_app, removed), removed
 
 
 class TestThemeConfig:
@@ -226,7 +224,7 @@ class TestThemeConfig:
 
 
 class TestModelLoading:
-    def test_distilled_model_created_with_correct_config(self):
+    def test_model_created_from_8bit_repo(self):
         mock_model = _make_mock_model()
         streamlit_app, mock_cls, _ = _reload_app(mock_model)
         with (
@@ -234,21 +232,15 @@ class TestModelLoading:
             patch("streamlit_app.ModelConfig") as mock_config,
         ):
             mock_config.flux2_klein_4b.return_value = "distilled_config"
-            streamlit_app._get_model_distilled()
-            mock_klein.assert_called_once_with(model_config="distilled_config")
+            streamlit_app._get_model()
+            # model_config is not redundant next to model_path: mflux builds the
+            # architecture from its transformer/text-encoder overrides.
+            mock_klein.assert_called_once_with(
+                model_path="mlx-community/flux2-klein-4b-8bit",
+                model_config="distilled_config",
+            )
 
-    def test_base_model_created_with_correct_config(self):
-        mock_model = _make_mock_model()
-        streamlit_app, mock_cls, _ = _reload_app(mock_model)
-        with (
-            patch("streamlit_app.Flux2Klein", return_value=mock_model) as mock_klein,
-            patch("streamlit_app.ModelConfig") as mock_config,
-        ):
-            mock_config.flux2_klein_base_4b.return_value = "base_config"
-            streamlit_app._get_model_base()
-            mock_klein.assert_called_once_with(model_config="base_config")
-
-    def test_edit_distilled_model_created_with_correct_config(self):
+    def test_edit_model_created_from_8bit_repo(self):
         mock_model = _make_mock_model()
         streamlit_app, _, _ = _reload_app(mock_model)
         with (
@@ -256,19 +248,29 @@ class TestModelLoading:
             patch("streamlit_app.ModelConfig") as mock_config,
         ):
             mock_config.flux2_klein_4b.return_value = "distilled_config"
-            streamlit_app._get_edit_model_distilled()
-            mock_edit.assert_called_once_with(model_config="distilled_config")
+            streamlit_app._get_edit_model()
+            mock_edit.assert_called_once_with(
+                model_path="mlx-community/flux2-klein-4b-8bit",
+                model_config="distilled_config",
+            )
 
-    def test_edit_base_model_created_with_correct_config(self):
+    def test_both_pipelines_share_one_repo(self):
+        """Text-to-image and editing load the same weights, so they share one
+        download and one HF cache entry (resident memory is not shared)."""
         mock_model = _make_mock_model()
         streamlit_app, _, _ = _reload_app(mock_model)
         with (
+            patch("streamlit_app.Flux2Klein", return_value=mock_model) as mock_klein,
             patch("streamlit_app.Flux2KleinEdit", return_value=mock_model) as mock_edit,
-            patch("streamlit_app.ModelConfig") as mock_config,
+            patch("streamlit_app.ModelConfig"),
         ):
-            mock_config.flux2_klein_base_4b.return_value = "base_config"
-            streamlit_app._get_edit_model_base()
-            mock_edit.assert_called_once_with(model_config="base_config")
+            streamlit_app._get_model()
+            streamlit_app._get_edit_model()
+            assert (
+                mock_klein.call_args.kwargs["model_path"]
+                == mock_edit.call_args.kwargs["model_path"]
+                == streamlit_app.MODEL_REPO
+            )
 
 
 class TestInfer:
@@ -344,27 +346,26 @@ class TestInfer:
                 guidance=1.0,
             )
 
-    def test_mode_selects_base_defaults(self):
+    def test_unset_params_fall_back_to_module_defaults(self):
         mock_model = _make_mock_model()
         streamlit_app, _, _ = _reload_app(mock_model)
         with patch("streamlit_app.Flux2Klein", return_value=mock_model):
-            streamlit_app.infer("a cat", mode="Quality")
+            streamlit_app.infer("a cat")
             mock_model.generate_image.assert_called_once_with(
                 seed=42,
                 prompt="a cat",
-                num_inference_steps=50,
+                num_inference_steps=streamlit_app.DEFAULT_STEPS,
                 width=1024,
                 height=1024,
-                guidance=4.0,
+                guidance=streamlit_app.DEFAULT_GUIDANCE,
             )
 
-    def test_explicit_params_override_mode_defaults(self):
+    def test_explicit_params_override_defaults(self):
         mock_model = _make_mock_model()
         streamlit_app, _, _ = _reload_app(mock_model)
         with patch("streamlit_app.Flux2Klein", return_value=mock_model):
             streamlit_app.infer(
                 "a cat",
-                mode="Quality",
                 guidance_scale=2.0,
                 num_inference_steps=10,
             )
@@ -383,12 +384,19 @@ class TestInfer:
         with patch("streamlit_app.Flux2Klein", return_value=mock_model):
             streamlit_app.infer(
                 "a cat",
-                mode="Quality",
                 num_inference_steps=10,
             )
             call_kwargs = mock_model.generate_image.call_args[1]
             assert call_kwargs["num_inference_steps"] == 10
-            assert call_kwargs["guidance"] == 4.0
+            assert call_kwargs["guidance"] == streamlit_app.DEFAULT_GUIDANCE
+
+    def test_infer_takes_no_mode_argument(self):
+        """The mode parameter is gone; a stale caller must fail loudly."""
+        import inspect
+
+        mock_model = _make_mock_model()
+        streamlit_app, _, _ = _reload_app(mock_model)
+        assert "mode" not in inspect.signature(streamlit_app.infer).parameters
 
     def test_image_list_uses_edit_model(self):
         mock_model = _make_mock_model()
@@ -464,18 +472,6 @@ class TestInfer:
             callback.assert_any_call(2, 4)
             callback.assert_any_call(3, 4)
             callback.assert_any_call(4, 4)
-
-    def test_progress_callback_with_base_mode(self):
-        mock_model = _make_mock_model()
-        streamlit_app, _, _ = _reload_app(mock_model)
-        with patch("streamlit_app.Flux2Klein", return_value=mock_model):
-            callback = MagicMock()
-            streamlit_app.infer("a cat", mode="Quality", progress_callback=callback)
-            registered = mock_model.callbacks.register.call_args[0][0]
-            mock_config = MagicMock()
-            mock_config.num_inference_steps = 50
-            registered.call_in_loop(0, 42, "a cat", None, mock_config, None)
-            callback.assert_called_once_with(1, 50)
 
     def test_progress_callback_with_image_list(self):
         mock_model = _make_mock_model()
@@ -1039,8 +1035,8 @@ class TestResolvePrompt:
 
 
 class TestStreamlitApp:
-    def test_get_model_distilled_uses_cache_resource(self):
-        """Verify _get_model_distilled is decorated with @st.cache_resource."""
+    def test_get_model_uses_cache_resource(self):
+        """Verify _get_model is decorated with @st.cache_resource."""
         with (
             patch("mflux.models.flux2.variants.Flux2Klein"),
             patch("mflux.models.flux2.variants.Flux2KleinEdit"),
@@ -1053,10 +1049,10 @@ class TestStreamlitApp:
             import streamlit_app
 
             importlib.reload(streamlit_app)
-            assert hasattr(streamlit_app._get_model_distilled, "clear")
+            assert hasattr(streamlit_app._get_model, "clear")
 
-    def test_get_model_base_uses_cache_resource(self):
-        """Verify _get_model_base is decorated with @st.cache_resource."""
+    def test_get_edit_model_uses_cache_resource(self):
+        """Verify _get_edit_model is decorated with @st.cache_resource."""
         with (
             patch("mflux.models.flux2.variants.Flux2Klein"),
             patch("mflux.models.flux2.variants.Flux2KleinEdit"),
@@ -1069,39 +1065,7 @@ class TestStreamlitApp:
             import streamlit_app
 
             importlib.reload(streamlit_app)
-            assert hasattr(streamlit_app._get_model_base, "clear")
-
-    def test_get_edit_model_distilled_uses_cache_resource(self):
-        """Verify _get_edit_model_distilled is decorated with @st.cache_resource."""
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein"),
-            patch("mflux.models.flux2.variants.Flux2KleinEdit"),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch("mlx_vlm.load"),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config"),
-        ):
-            import streamlit_app
-
-            importlib.reload(streamlit_app)
-            assert hasattr(streamlit_app._get_edit_model_distilled, "clear")
-
-    def test_get_edit_model_base_uses_cache_resource(self):
-        """Verify _get_edit_model_base is decorated with @st.cache_resource."""
-        with (
-            patch("mflux.models.flux2.variants.Flux2Klein"),
-            patch("mflux.models.flux2.variants.Flux2KleinEdit"),
-            patch("mflux.models.common.config.ModelConfig"),
-            patch("mlx_vlm.load"),
-            patch("mlx_vlm.generate"),
-            patch("mlx_vlm.prompt_utils.apply_chat_template"),
-            patch("mlx_vlm.utils.load_config"),
-        ):
-            import streamlit_app
-
-            importlib.reload(streamlit_app)
-            assert hasattr(streamlit_app._get_edit_model_base, "clear")
+            assert hasattr(streamlit_app._get_edit_model, "clear")
 
     def test_get_vlm_uses_cache_resource(self):
         """Verify _get_vlm is decorated with @st.cache_resource."""
@@ -1120,7 +1084,7 @@ class TestStreamlitApp:
             assert hasattr(streamlit_app._get_vlm, "clear")
 
     def test_getters_have_loading_spinner_labels(self):
-        """All five cached getters label their long first load via show_spinner."""
+        """All three cached getters label their long first load via show_spinner."""
         captured = []
 
         def recording_cache_resource(func=None, **kwargs):
@@ -1143,7 +1107,7 @@ class TestStreamlitApp:
 
             importlib.reload(streamlit_app)
 
-        assert len(captured) == 5
+        assert len(captured) == 3
         assert all(kwargs["show_spinner"].startswith("Loading") for kwargs in captured)
 
     def test_ui_not_executed_on_import(self):
@@ -1161,10 +1125,11 @@ class TestStreamlitApp:
             mock_text_input.assert_not_called()
             mock_button.assert_not_called()
 
-    def test_mode_defaults_to_distilled(self):
+    def test_no_mode_control_rendered(self):
+        # The base variant was dropped, so there is nothing to switch between.
         with _app_test() as app:
             at = app.run(timeout=10)
-            assert at.segmented_control(key="mode_radio").value == "Distilled (4 steps)"
+            assert len(at.get("segmented_control")) == 0
 
     def test_uploader_always_present(self):
         with _app_test() as app:
@@ -1194,16 +1159,26 @@ class TestStreamlitApp:
             at = app.run(timeout=10)
             assert at.text_input(key="prompt_input").placeholder == "Enter your prompt"
 
-    def test_mode_change_updates_steps_and_guidance(self):
+    def test_sliders_seed_the_distilled_defaults(self):
+        # Nothing writes these keys any more (the mode block used to), so the
+        # setdefault seeding is the only thing standing between the sliders and
+        # their min_value — 1 step at guidance 0.0 would render noise.
+        import streamlit_app
+
         with _app_test() as app:
             at = app.run(timeout=10)
-            assert at.slider(key="steps_slider").value == 4
-            assert at.slider(key="guidance_scale_slider").value == 1.0
-            at.segmented_control(key="mode_radio").set_value("Base (50 steps)").run(
-                timeout=10
+            assert at.slider(key="steps_slider").value == streamlit_app.DEFAULT_STEPS
+            assert (
+                at.slider(key="guidance_scale_slider").value
+                == streamlit_app.DEFAULT_GUIDANCE
             )
+
+    def test_steps_slider_still_allows_long_runs(self):
+        # Losing the Base preset must not lose the ability to run many steps.
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            at.slider(key="steps_slider").set_value(50).run(timeout=10)
             assert at.slider(key="steps_slider").value == 50
-            assert at.slider(key="guidance_scale_slider").value == 4.0
 
     def test_advanced_sliders_render_while_collapsed(self):
         # The Advanced settings expander is collapsed by default, yet its four
@@ -1292,24 +1267,6 @@ def _app_test():
 
 
 class TestExamplesAndLabels:
-    def test_mode_labels_and_inverse_mapping(self):
-        import streamlit_app
-
-        assert streamlit_app.MODE_LABELS == {
-            "Fast": "Distilled (4 steps)",
-            "Quality": "Base (50 steps)",
-        }
-        assert streamlit_app.LABEL_TO_MODE == {
-            "Distilled (4 steps)": "Fast",
-            "Base (50 steps)": "Quality",
-        }
-        # A label exists for every mode and the mapping round-trips.
-        assert set(streamlit_app.MODE_LABELS) == set(streamlit_app.MODE_DEFAULTS)
-        assert all(
-            streamlit_app.MODE_LABELS[streamlit_app.LABEL_TO_MODE[label]] == label
-            for label in streamlit_app.LABEL_TO_MODE
-        )
-
     def test_example_prompts_shape(self):
         import streamlit_app
 
@@ -1500,13 +1457,6 @@ class TestUIWidgets:
             assert not mock_edit.generate_image.called
             guard = next(w for w in at.warning if "Enter a prompt" in w.value)
             assert guard.icon == ":material/warning:"
-
-    def test_mode_control_is_required(self):
-        # required=True keeps a selection; a deselect would blank the control and
-        # silently reset the steps/guidance sliders.
-        with _app_test() as app:
-            at = app.run(timeout=10)
-            assert at.segmented_control(key="mode_radio").proto.required is True
 
     def test_settings_use_toggles(self):
         # Prompt upsampling and Randomize seed are settings, so they render as
