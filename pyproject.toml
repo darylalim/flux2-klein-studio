@@ -26,15 +26,30 @@ Changelog = "https://github.com/darylalim/flux2-klein-studio/releases"
 # PEP 440 comma range, and would silently fall back to latest. Bump this and
 # re-run `uv lock` together.
 [tool.uv]
-required-version = "==0.12.4"
+required-version = "==0.12.5"
 
 [dependency-groups]
 dev = [
     "pytest",
     "pyyaml>=6.0.3",
-    "ruff",
+    # >=0.16 is where `ruff format` started formatting Python fenced in
+    # Markdown. CI's `ruff format --check .` and .claude/hooks/ruff-format.sh
+    # both depend on that, so an older ruff would silently reopen the
+    # local/CI divergence the hook exists to close.
+    "ruff>=0.16",
     "ty",
 ]
+
+[tool.pytest.ini_options]
+# The smoke tests load real weights (~8.6GB) and generate for real, so they are
+# opt-in: plain `uv run pytest` deselects them (which is what CI runs -- it has
+# neither the weights nor Apple Silicon), `uv run pytest -m smoke` runs them.
+# They are the only tests that touch the real mflux/mlx-vlm surface, so treat
+# them as a manual pre-release gate rather than dead weight.
+markers = [
+    "smoke: real model load and generation; needs weights on disk, opt-in",
+]
+addopts = "-m 'not smoke'"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "SIM"]

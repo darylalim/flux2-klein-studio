@@ -58,7 +58,12 @@ def _make_mock_vlm():
     return mock_model, mock_processor, mock_config
 
 
-_CONFIG_PATH = Path(__file__).resolve().parent.parent / ".streamlit" / "config.toml"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_CONFIG_PATH = _REPO_ROOT / ".streamlit" / "config.toml"
+# AppTest resolves a relative script path against the *calling test file*
+# (it used to resolve against the working directory), so hand it an
+# absolute path and stay independent of both.
+_APP_PATH = _REPO_ROOT / "streamlit_app.py"
 
 # WCAG 2.1 AA minimum contrast ratio for normal-size text (links, body, buttons).
 _WCAG_AA_NORMAL = 4.5
@@ -1287,7 +1292,7 @@ def _patched_models(txt2img, edit, *, vlm_text=None):
     ):
         from streamlit.testing.v1 import AppTest
 
-        yield AppTest.from_file("streamlit_app.py"), vlm_generate
+        yield AppTest.from_file(_APP_PATH), vlm_generate
 
 
 @contextlib.contextmanager
