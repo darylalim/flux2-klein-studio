@@ -146,6 +146,40 @@ class TestCIWorkflow:
             )
 
 
+class TestUvVersionPin:
+    """``[tool.uv] required-version`` keeps local uv and CI on the same uv.
+
+    Without it, ``astral-sh/setup-uv`` installs whatever uv is latest, and a uv
+    whose resolution-marker normalization differs from the one that wrote
+    ``uv.lock`` fails ``uv sync --locked`` on a lockfile nobody edited.
+    """
+
+    def test_pyproject_pins_uv_exactly(self):
+        with _PYPROJECT.open("rb") as fh:
+            required = (
+                tomllib.load(fh).get("tool", {}).get("uv", {}).get("required-version")
+            )
+        assert required, "pyproject must declare [tool.uv] required-version"
+        # Must be `==`: setup-uv strips that prefix and installs the literal
+        # version, but cannot parse a PEP 440 comma range (">=0.12,<0.13") and
+        # would silently fall back to installing latest.
+        assert required.startswith("=="), (
+            f"required-version must be an == pin for setup-uv to resolve it, got {required!r}"
+        )
+
+    def test_ci_does_not_override_the_pyproject_pin(self):
+        # setup-uv reads required-version only when its `version:` input is
+        # empty. A hardcoded version here would shadow pyproject and give the
+        # pin two sources of truth that can drift apart.
+        for job in _load_workflow()["jobs"].values():
+            for step in job["steps"]:
+                if step.get("uses", "").startswith("astral-sh/setup-uv"):
+                    assert not step.get("with", {}).get("version"), (
+                        "ci.yml pins uv directly; the pin belongs in pyproject's "
+                        "[tool.uv] required-version so local and CI share one source"
+                    )
+
+
 class TestPythonVersionPin:
     """``.python-version`` keeps local uv and CI on the same interpreter."""
 

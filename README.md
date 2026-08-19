@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/darylalim/flux2-klein-studio)](https://github.com/darylalim/flux2-klein-studio/releases)
 [![License](https://img.shields.io/github/license/darylalim/flux2-klein-studio)](LICENSE)
 
-Streamlit application for generating and editing images using Black Forest Labs [FLUX.2 Klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) on Apple Silicon with MLX.
+Streamlit application for generating and editing images using Black Forest Labs [FLUX.2 Klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) on Apple Silicon with MLX, running the [8-bit quantized distilled 4B](https://huggingface.co/mlx-community/flux2-klein-4b-8bit) weights.
 
 <p align="center">
   <img src="docs/screenshot-light.png" width="49%" alt="FLUX.2 Klein Studio — light theme">
@@ -15,7 +15,7 @@ Streamlit application for generating and editing images using Black Forest Labs 
 ## Features
 
 - Unified generation and editing — text-to-image by default; uploading one or more images switches to editing automatically
-- Two speed/quality modes: Distilled (4 steps) and Base (50 steps)
+- 8-bit quantized weights — an 8.6GB download instead of 16GB, with no local quantization pass at load (see Requirements for the memory picture, which is a separate question from download size)
 - Native Apple Silicon performance via MLX — inference runs on MLX, not PyTorch
 - Two-column studio layout: controls on the left, generated image on the right
 - Enter to run — the prompt row is a borderless form, so pressing Enter submits the run
@@ -32,6 +32,7 @@ Streamlit application for generating and editing images using Black Forest Labs 
 
 - Apple Silicon Mac (M1+)
 - Python 3.12+
+- **16GB unified memory minimum; 24GB+ comfortable.** Weight size understates what a run actually needs: with only the text-to-image model resident, a 1024×1024 generation measured a 24GB process footprint against 8.6GB of weights. Most of the excess is MLX's Metal buffer cache — retained for reuse and reclaimable under pressure rather than leaked — but it is real memory while the session is warm. Generating *and* editing in one session keeps two independent weight copies resident, since they are separate cached models.
 
 ## Setup
 
@@ -39,7 +40,9 @@ Streamlit application for generating and editing images using Black Forest Labs 
 2. Install dependencies: `uv sync`
 3. Run the application: `uv run streamlit run streamlit_app.py`
 
-Models download automatically on first use and are cached locally for reuse: budget roughly 8–10GB per FLUX.2 Klein variant — Distilled and Base are separate downloads, so trying both pulls both — plus ~1GB for SmolVLM.
+Models download automatically on first use and are cached locally for reuse: **~8.6GB** for the 8-bit FLUX.2 Klein weights, plus ~1GB for SmolVLM if you turn prompt upsampling on. Text-to-image and editing share the same download.
+
+The app loads [`mlx-community/flux2-klein-4b-8bit`](https://huggingface.co/mlx-community/flux2-klein-4b-8bit) — the distilled FLUX.2 Klein 4B pre-quantized to 8-bit by mflux, which is roughly half the 16GB the bf16 original would pull. The 50-step base variant has no pre-quantized build published, so the app does not offer it.
 
 ## Usage
 
@@ -55,13 +58,11 @@ The studio opens with controls on the left and the output on the right.
   <img src="examples/bird.webp" height="260" alt="Editing input: bird">
 </p>
 
-**Mode** — choose *Distilled (4 steps)* for fast drafts or *Base (50 steps)* for higher quality.
-
 **Advanced settings** (collapsed by default):
 
 - **Prompt upsampling** — a vision-language model (SmolVLM-500M) rewrites your prompt into a more descriptive one; when editing, it can see your uploaded images. Off by default.
 - **Seed** — *Randomize* is **on** by default, so each Run varies. Turn it off and set a seed for reproducible results.
-- **Width / Height / Number of inference steps / Guidance scale** — fine-tune output size and sampling.
+- **Width / Height / Number of inference steps / Guidance scale** — fine-tune output size and sampling. The distilled model is tuned for 4 steps at guidance 1.0 (the defaults) and is guidance-free by design, but both sliders stay open if you want to push further.
 
 **Examples** — click a prompt example to fill the box, or an editing example to load its prompt together with its bundled input images.
 
@@ -78,7 +79,7 @@ uv run pytest         # Unit tests
 
 ### Continuous integration
 
-[GitHub Actions](.github/workflows/ci.yml) runs the same four checks on every push to `main` and every pull request, on a single `macos-latest` (Apple Silicon) runner — `mlx` only ships a CUDA build for Linux, so the suite can't import on a GPU-less Linux runner, and macOS is the app's target platform anyway. No model weights are downloaded (the tests mock the model loaders), so CI stays fast and needs no Hugging Face token. A secret-leak guard (`tests/test_secrets.py`) also fails the build if any tracked file contains a recognizable secret — an HF or GitHub token, a private key, or an AWS access key — or if `.env`/`secrets.toml` is ever committed. A license-consistency check (`tests/test_license.py`) likewise keeps the `LICENSE` file, the `pyproject.toml` metadata, and the README License section in agreement, so relicensing one without the others fails CI. A README-asset guard (`tests/test_readme.py`) fails the build if the README embeds a local image — a `docs/` screenshot or an `examples/` input — that is missing from the repo or not git-tracked (a broken image on GitHub). `.python-version` pins the interpreter to 3.12 so local `uv` and CI resolve the same runtime.
+[GitHub Actions](.github/workflows/ci.yml) runs the same four checks on every push to `main` and every pull request, on a single `macos-latest` (Apple Silicon) runner — `mlx` only ships a CUDA build for Linux, so the suite can't import on a GPU-less Linux runner, and macOS is the app's target platform anyway. No model weights are downloaded (the tests mock the model loaders), so CI stays fast and needs no Hugging Face token. A secret-leak guard (`tests/test_secrets.py`) also fails the build if any tracked file contains a recognizable secret — an HF or GitHub token, a private key, or an AWS access key — or if `.env`/`secrets.toml` is ever committed. A license-consistency check (`tests/test_license.py`) likewise keeps the `LICENSE` file, the `pyproject.toml` metadata, and the README License section in agreement, so relicensing one without the others fails CI. A README-asset guard (`tests/test_readme.py`) fails the build if the README embeds a local image — a `docs/` screenshot or an `examples/` input — that is missing from the repo or not git-tracked (a broken image on GitHub). `.python-version` pins the interpreter to 3.12 so local `uv` and CI resolve the same runtime, and `[tool.uv] required-version` in `pyproject.toml` pins uv itself — `setup-uv` reads that key, so local and CI share one uv and the lockfile can't churn between them.
 
 ### Releases
 
@@ -94,7 +95,7 @@ This project is released under the [MIT License](LICENSE).
 
 It builds on components with their own licenses, all permissive:
 
-- **FLUX.2 Klein 4B** (distilled and base) and **SmolVLM-500M-Instruct** — [Apache-2.0](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) (open weights, commercial use permitted). The 9B FLUX.2 Klein variants carry a non-commercial license and are **not** used here.
+- **FLUX.2 Klein 4B** (distilled) and **SmolVLM-500M-Instruct** — [Apache-2.0](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) (open weights, commercial use permitted). The 8-bit weights this app loads are an Apache-2.0 quantized redistribution of the same model. The 9B FLUX.2 Klein variants carry a non-commercial license and are **not** used here.
 - **mflux** and **mlx-vlm** — MIT
 - **Streamlit** — Apache-2.0
 

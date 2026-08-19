@@ -23,19 +23,18 @@ OUTPUT_FRAME_HEIGHT = 420
 
 VLM_MODEL_ID = "mlx-community/SmolVLM-500M-Instruct-bf16"
 
-MODE_DEFAULTS = {
-    "Fast": {"steps": 4, "cfg": 1.0},
-    "Quality": {"steps": 50, "cfg": 4.0},
-}
+# The app ships exactly one model: the distilled FLUX.2 Klein 4B, pre-quantized
+# to 8-bit by mflux itself (its safetensors carry mflux's own
+# quantization_level=8 metadata), so loading needs no local quantization pass.
+# 8.6GB on disk against 16GB for the bf16 original. The base (50-step) variant
+# has no pre-quantized build on the Hub, which is why the app no longer offers a
+# mode switch.
+MODEL_REPO = "mlx-community/flux2-klein-4b-8bit"
 
-# UI display labels for the speed/quality modes (match the FLUX.2 [klein] Gradio
-# space). Internal keys stay "Fast"/"Quality"; only the visible text changes.
-MODE_LABELS = {
-    "Fast": "Distilled (4 steps)",
-    "Quality": "Base (50 steps)",
-}
-LABEL_TO_MODE = {label: mode for mode, label in MODE_LABELS.items()}
-MODE_LABEL_LIST = list(MODE_LABELS.values())
+# The distilled variant is guidance-free and converges in 4 steps. These seed the
+# steps/guidance sliders, which stay adjustable.
+DEFAULT_STEPS = 4
+DEFAULT_GUIDANCE = 1.0
 
 EXAMPLE_PROMPTS = [
     "Create a vase on a table in living room, the color of the vase is a gradient of color, starting with #02eb3c color and finishing with #edfa3c. The flowers inside the vase have the color #ff0088",
@@ -59,36 +58,22 @@ EDIT_EXAMPLES = [
 ]
 
 
-@st.cache_resource(show_spinner="Loading FLUX.2 Klein (distilled)…")
-def _get_model_distilled():
-    return Flux2Klein(model_config=ModelConfig.flux2_klein_4b())
+# model_path picks the weights; model_config supplies the architecture (its
+# transformer/text-encoder overrides), which mflux does not read from the repo.
+# Passing it is redundant *today* — mflux itself defaults to
+# `model_config or ModelConfig.flux2_klein_4b()` — but it is stated explicitly so
+# the repo/architecture pairing is visible at the call site, and it becomes
+# load-bearing the moment MODEL_REPO points at anything but a 4b build.
+@st.cache_resource(show_spinner="Loading FLUX.2 Klein (8-bit)…")
+def _get_model():
+    return Flux2Klein(model_path=MODEL_REPO, model_config=ModelConfig.flux2_klein_4b())
 
 
-@st.cache_resource(show_spinner="Loading FLUX.2 Klein (base)…")
-def _get_model_base():
-    return Flux2Klein(model_config=ModelConfig.flux2_klein_base_4b())
-
-
-MODELS = {
-    "Fast": _get_model_distilled,
-    "Quality": _get_model_base,
-}
-
-
-@st.cache_resource(show_spinner="Loading FLUX.2 Klein Edit (distilled)…")
-def _get_edit_model_distilled():
-    return Flux2KleinEdit(model_config=ModelConfig.flux2_klein_4b())
-
-
-@st.cache_resource(show_spinner="Loading FLUX.2 Klein Edit (base)…")
-def _get_edit_model_base():
-    return Flux2KleinEdit(model_config=ModelConfig.flux2_klein_base_4b())
-
-
-EDIT_MODELS = {
-    "Fast": _get_edit_model_distilled,
-    "Quality": _get_edit_model_base,
-}
+@st.cache_resource(show_spinner="Loading FLUX.2 Klein Edit (8-bit)…")
+def _get_edit_model():
+    return Flux2KleinEdit(
+        model_path=MODEL_REPO, model_config=ModelConfig.flux2_klein_4b()
+    )
 
 
 @st.cache_resource(show_spinner="Loading SmolVLM prompt enhancer…")
@@ -241,20 +226,18 @@ def infer(
     height=1024,
     guidance_scale=None,
     num_inference_steps=None,
-    mode="Fast",
     image_list=None,
     progress_callback=None,
 ):
-    defaults = MODE_DEFAULTS[mode]
     if guidance_scale is None:
-        guidance_scale = defaults["cfg"]
+        guidance_scale = DEFAULT_GUIDANCE
     if num_inference_steps is None:
-        num_inference_steps = defaults["steps"]
+        num_inference_steps = DEFAULT_STEPS
 
     if randomize_seed:
         seed = random.randint(0, MAX_SEED)
 
-    model = EDIT_MODELS[mode]() if image_list else MODELS[mode]()
+    model = _get_edit_model() if image_list else _get_model()
 
     reporter = None
     if progress_callback is not None:
@@ -359,31 +342,6 @@ if __name__ == "__main__":
                     st.image(st.session_state.example_images, width=80)
                 st.button("Clear example images", on_click=_clear_example_images)
 
-        # Mode (speed/quality). Display labels map back to internal MODE_DEFAULTS
-        # keys. segmented_control is the modern single-select for a few visible
-        # options. required=True forbids deselecting the active segment, so the
-        # visible selection always matches the effective mode — without it a
-        # deselect returns None, blanks the control, and silently resets the
-        # steps/guidance sliders, and guarantees a non-None return.
-        mode_label = st.segmented_control(
-            "Mode",
-            options=MODE_LABEL_LIST,
-            default=MODE_LABEL_LIST[0],
-            key="mode_radio",
-            required=True,
-        )
-        mode = LABEL_TO_MODE[mode_label]
-
-        # Seed the mode's default steps/guidance into the slider keys. This writes
-        # widget-backed keys, so it must stay ABOVE the Advanced settings expander
-        # where those sliders are created — assigning a widget key after the widget
-        # renders raises StreamlitAPIException.
-        if mode != st.session_state.get("prev_mode"):
-            st.session_state.prev_mode = mode
-            defaults = MODE_DEFAULTS[mode]
-            st.session_state.guidance_scale_slider = defaults["cfg"]
-            st.session_state.steps_slider = defaults["steps"]
-
         image_list = None
         if uploaded_files:
             # A manual upload overrides any loaded example images
@@ -417,8 +375,8 @@ if __name__ == "__main__":
             st.session_state.pop("auto_enhanced_prompt", None)
             # Match the sliders to a new input image, but leave a manual size
             # untouched when the image set is cleared. Writes the width/height
-            # slider keys, so (like the mode block) it must stay above the
-            # Advanced settings expander that instantiates those sliders.
+            # slider keys, so it must stay above the Advanced settings expander
+            # that instantiates those sliders.
             if image_list:
                 _w, _h = _dimensions_from_images(image_list)
                 st.session_state.width_slider = _w
@@ -438,12 +396,14 @@ if __name__ == "__main__":
 
         st.session_state.setdefault("width_slider", 1024)
         st.session_state.setdefault("height_slider", 1024)
+        st.session_state.setdefault("steps_slider", DEFAULT_STEPS)
+        st.session_state.setdefault("guidance_scale_slider", DEFAULT_GUIDANCE)
 
         # The four sliders below are instantiated on every run — two invariants
         # to preserve:
-        #  1. Keys seeded above (guidance/steps on mode change, width/height on
-        #     image change) are written before this line, so they land before the
-        #     widgets exist. Keep those blocks above this expander.
+        #  1. Keys seeded above (width/height on image change, plus the
+        #     steps/guidance defaults) are written before this line, so they land
+        #     before the widgets exist. Keep those blocks above this expander.
         #  2. Do NOT gate this body with on_change="rerun" + `.open` to skip it
         #     when collapsed: the slider return values feed infer() below, so they
         #     must be assigned every run — a collapsed, un-run body leaves them
@@ -588,7 +548,6 @@ if __name__ == "__main__":
                         height,
                         guidance_scale,
                         num_inference_steps,
-                        mode=mode,
                         image_list=image_list,
                         progress_callback=_update_progress,
                     )
