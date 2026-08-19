@@ -40,6 +40,17 @@ dev = [
     "ty",
 ]
 
+[tool.pytest.ini_options]
+# The smoke tests load real weights (~8.6GB) and generate for real, so they are
+# opt-in: plain `uv run pytest` deselects them (which is what CI runs -- it has
+# neither the weights nor Apple Silicon), `uv run pytest -m smoke` runs them.
+# They are the only tests that touch the real mflux/mlx-vlm surface, so treat
+# them as a manual pre-release gate rather than dead weight.
+markers = [
+    "smoke: real model load and generation; needs weights on disk, opt-in",
+]
+addopts = "-m 'not smoke'"
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]  # line length is enforced by the formatter

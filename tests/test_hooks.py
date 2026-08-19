@@ -18,7 +18,8 @@ from pathlib import Path
 
 import pytest
 
-_HOOKS_DIR = Path(__file__).resolve().parent.parent / ".claude" / "hooks"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_HOOKS_DIR = _REPO_ROOT / ".claude" / "hooks"
 _SETTINGS = _HOOKS_DIR.parent / "settings.json"
 
 # The subprocess-driven tests need bash to run the scripts and jq (which the
@@ -245,19 +246,22 @@ class TestGuardPaths:
 
 @_requires_shell
 class TestRuffFormatHook:
-    """PostToolUse: format edited in-project .py/.md files (lint-fix .py), else no-op."""
+    """PostToolUse: format edited in-project files ruff handles, else no-op."""
 
-    def test_formats_python_file_scoped_to_that_file(self, tmp_path):
+    # `ruff check` handles .pyi and .ipynb as well as .py, so all three get the
+    # lint-fix pass; only Markdown is format-only (see the test below).
+    @pytest.mark.parametrize("name", ["mod.py", "stub.pyi", "nb.ipynb"])
+    def test_formats_and_lint_fixes_python_scoped_to_that_file(self, name, tmp_path):
         proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
-        py = proj / "mod.py"
-        py.write_text("x=1\n")
-        result = _run_hook("ruff-format.sh", py, project_dir=proj, env=env)
+        target = proj / name
+        target.write_text("x=1\n")
+        result = _run_hook("ruff-format.sh", target, project_dir=proj, env=env)
         assert result.returncode == 0
         logged = log.read_text()
         assert "ruff format" in logged
         assert "ruff check --fix" in logged
-        assert str(py) in logged  # ruff is scoped to the edited file, not the repo
+        assert str(target) in logged  # scoped to the edited file, not the repo
 
     def test_formats_markdown_without_lint_fixing_it(self, tmp_path):
         # `ruff format` (>=0.16) formats Python fenced in Markdown and CI checks
@@ -276,10 +280,19 @@ class TestRuffFormatHook:
 
     @pytest.mark.parametrize(
         "name",
-        # "README.MD" is deliberate: ruff recognizes Markdown only by a
-        # lowercase `.md` and parses any other extension as Python source, so a
-        # mis-cased doc must no-op rather than be handed to ruff to misparse.
-        ["notes.txt", "settings.json", "pyproject.toml", "README.MD"],
+        # The mis-cased entries are the point: ruff picks its parser from the
+        # extension it is handed and parses anything unrecognized as Python
+        # source. On a case-insensitive filesystem a mis-cased path opens the
+        # real file, so handing ruff a NB.IPYNB rewrites the notebook's JSON as
+        # formatted Python and destroys it. These must no-op, not reach ruff.
+        [
+            "notes.txt",
+            "settings.json",
+            "pyproject.toml",
+            "README.MD",
+            "NB.IPYNB",
+            "STUB.PYI",
+        ],
     )
     def test_skips_file_ruff_does_not_format(self, name, tmp_path):
         proj = _project(tmp_path)
@@ -290,7 +303,9 @@ class TestRuffFormatHook:
         assert result.returncode == 0
         assert log.read_text() == ""  # uv never invoked
 
-    @pytest.mark.parametrize("name", ["ghost.py", "ghost.md"])
+    @pytest.mark.parametrize(
+        "name", ["ghost.py", "ghost.md", "ghost.pyi", "ghost.ipynb"]
+    )
     def test_skips_nonexistent_file(self, name, tmp_path):
         proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
@@ -298,7 +313,9 @@ class TestRuffFormatHook:
         assert result.returncode == 0
         assert log.read_text() == ""
 
-    @pytest.mark.parametrize("name", ["outside.py", "outside.md"])
+    @pytest.mark.parametrize(
+        "name", ["outside.py", "outside.md", "outside.pyi", "outside.ipynb"]
+    )
     def test_skips_file_outside_the_project(self, name, tmp_path):
         # An edit to a formattable file outside the repo must not be reformatted.
         proj = _project(tmp_path)
@@ -317,6 +334,82 @@ class TestRuffFormatHook:
         py.write_text("x=1\n")
         result = _run_hook("ruff-format.sh", py, project_dir=proj, env=env)
         assert result.returncode == 0
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="needs the project's ruff")
+class TestRuffHandlesTheHookedExtensions:
+    """The real ruff must reformat every extension ruff-format.sh routes to it.
+
+    The hook tests above drive a stubbed ``uv``: they lock *that* ruff is
+    invoked, not that ruff does anything once it is. If a future ruff dropped
+    Markdown or notebook formatting, those tests would stay green while the hook
+    silently did nothing and CI's ``ruff format --check .`` diverged from it all
+    over again. This runs the project's actual ruff once per routed extension to
+    pin the assumption the hook rests on. (``pyproject.toml`` declares the
+    matching ``ruff>=0.16`` floor.)
+    """
+
+    @staticmethod
+    def _ruff_format(target):
+        subprocess.run(
+            ["uv", "run", "ruff", "format", "--no-cache", str(target)],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=120,
+        )
+
+    @pytest.mark.parametrize(
+        ("name", "source", "expected"),
+        [
+            # Markdown is why the hook was widened: ruff >=0.16 formats Python
+            # fenced inside it, and CI's `ruff format --check .` walks the root.
+            ("doc.md", "# t\n\n```python\nx  =  1\n```\n", "x = 1"),
+            ("mod.py", "x  =  1\n", "x = 1"),
+            ("stub.pyi", "def f(x:int)->int: ...\n", "def f(x: int) -> int: ..."),
+        ],
+    )
+    def test_ruff_reformats(self, name, source, expected, tmp_path):
+        target = tmp_path / name
+        target.write_text(source)
+        self._ruff_format(target)
+        assert expected in target.read_text()
+
+    def test_ruff_reformats_notebook_cells_in_place(self, tmp_path):
+        # .ipynb is JSON, so assert on the cell source *and* that the envelope
+        # still parses: ruff handed a notebook under an extension it does not
+        # recognize rewrites the JSON as a Python dict literal, which would
+        # leave the expected substring present but the notebook unreadable.
+        nb = tmp_path / "nb.ipynb"
+        nb.write_text(
+            json.dumps(
+                {
+                    "cells": [
+                        {
+                            "cell_type": "code",
+                            "execution_count": None,
+                            "metadata": {},
+                            "outputs": [],
+                            "source": ["x  =  1\n"],
+                        }
+                    ],
+                    "metadata": {
+                        "kernelspec": {
+                            "display_name": "Python 3",
+                            "language": "python",
+                            "name": "python3",
+                        },
+                        "language_info": {"name": "python", "version": "3.12.0"},
+                    },
+                    "nbformat": 4,
+                    "nbformat_minor": 5,
+                }
+            )
+        )
+        self._ruff_format(nb)
+        loaded = json.loads(nb.read_text())  # still a notebook, not Python
+        assert "".join(loaded["cells"][0]["source"]).strip() == "x = 1"
 
 
 @_requires_shell
@@ -361,9 +454,27 @@ class TestMarkTestsPendingHook:
     def _marker(self, proj):
         return proj / ".claude" / ".tests-pending"
 
+    # One entry per test module that reads a repo file: if the suite asserts
+    # on it, editing it must arm the end-of-turn pytest run. Drift here is
+    # silent -- CI still fails, but the local loop goes quiet.
     @pytest.mark.parametrize(
         "rel",
-        ["streamlit_app.py", "tests/test_app.py", ".streamlit/config.toml"],
+        [
+            "streamlit_app.py",
+            "tests/test_app.py",
+            ".streamlit/config.toml",
+            ".github/workflows/ci.yml",
+            ".github/workflows/release.yml",
+            ".github/release.yml",
+            ".claude/settings.json",
+            ".claude/hooks/ruff-format.sh",
+            "README.md",
+            "docs/screenshot-light.png",
+            "examples/woman1.webp",
+            "pyproject.toml",
+            "LICENSE",
+            ".python-version",
+        ],
     )
     def test_marks_pending_for_covered_files(self, rel, tmp_path):
         proj = _project(tmp_path)
@@ -371,11 +482,22 @@ class TestMarkTestsPendingHook:
         assert result.returncode == 0
         assert self._marker(proj).exists()
 
-    def test_no_marker_for_unrelated_edit(self, tmp_path):
+    @pytest.mark.parametrize(
+        "rel",
+        [
+            # No test reads CLAUDE.md -- it is covered by `ruff format
+            # --check`, which is ruff-format.sh's job, not pytest's. Listing
+            # it here keeps that exclusion deliberate rather than an oversight.
+            "CLAUDE.md",
+            # Personal permission overrides; gitignored and unasserted.
+            ".claude/settings.local.json",
+            "notes.txt",
+            ".gitignore",
+        ],
+    )
+    def test_no_marker_for_unrelated_edit(self, rel, tmp_path):
         proj = _project(tmp_path)
-        result = _run_hook(
-            "mark-tests-pending.sh", proj / "README.md", project_dir=proj
-        )
+        result = _run_hook("mark-tests-pending.sh", proj / rel, project_dir=proj)
         assert result.returncode == 0
         assert not self._marker(proj).exists()
 

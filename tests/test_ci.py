@@ -180,6 +180,52 @@ class TestUvVersionPin:
                     )
 
 
+class TestSmokeTestsStayOptIn:
+    """CI's `uv run pytest` must never select the real-weights smoke suite.
+
+    ``tests/test_smoke.py`` loads ~8.6GB of weights and generates for real. It is
+    the only thing that exercises the live mflux/mlx-vlm surface (everything else
+    mocks the model classes), but CI has neither the weights nor the budget, so
+    the default run has to deselect it. Losing the ``addopts`` line would make
+    every CI run try to download the model.
+    """
+
+    def _pytest_config(self):
+        with _PYPROJECT.open("rb") as fh:
+            return (
+                tomllib.load(fh)
+                .get("tool", {})
+                .get("pytest", {})
+                .get("ini_options", {})
+            )
+
+    def test_default_run_deselects_smoke(self):
+        addopts = self._pytest_config().get("addopts", "")
+        assert "not smoke" in addopts, (
+            "pyproject's [tool.pytest.ini_options] addopts must deselect the "
+            f"smoke marker so CI does not download weights, got {addopts!r}"
+        )
+
+    def test_smoke_marker_is_registered(self):
+        # An unregistered marker is a warning, not an error, so a typo'd
+        # `@pytest.mark.smoke` would silently select nothing.
+        markers = self._pytest_config().get("markers", [])
+        assert any(m.startswith("smoke:") for m in markers), (
+            f"the smoke marker must be declared in [tool.pytest.ini_options], got {markers}"
+        )
+
+    def test_ci_runs_pytest_without_overriding_the_marker(self):
+        # `-m smoke` on CI's pytest invocation would defeat the addopts default,
+        # since pytest honours the last -m it is given.
+        for job in _load_workflow()["jobs"].values():
+            for step in job["steps"]:
+                run = step.get("run", "")
+                if "pytest" in run:
+                    assert "-m" not in run.split(), (
+                        f"ci.yml must not pass -m to pytest, got {run!r}"
+                    )
+
+
 class TestPythonVersionPin:
     """``.python-version`` keeps local uv and CI on the same interpreter."""
 

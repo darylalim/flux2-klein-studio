@@ -77,6 +77,15 @@ uv run ty check .     # Type check
 uv run pytest         # Unit tests
 ```
 
+The unit tests mock the model classes, so they never download weights — which
+also means they cannot catch a breaking change in mflux or mlx-vlm. A separate
+opt-in suite exercises the real stack end to end and is worth running before
+tagging a release (Apple Silicon and ~8.6GB of weights required):
+
+```bash
+uv run pytest -m smoke   # Real model load + generation
+```
+
 ### Continuous integration
 
 [GitHub Actions](.github/workflows/ci.yml) runs the same four checks on every push to `main` and every pull request, on a single `macos-latest` (Apple Silicon) runner — `mlx` only ships a CUDA build for Linux, so the suite can't import on a GPU-less Linux runner, and macOS is the app's target platform anyway. No model weights are downloaded (the tests mock the model loaders), so CI stays fast and needs no Hugging Face token. A secret-leak guard (`tests/test_secrets.py`) also fails the build if any tracked file contains a recognizable secret — an HF or GitHub token, a private key, or an AWS access key — or if `.env`/`secrets.toml` is ever committed. A license-consistency check (`tests/test_license.py`) likewise keeps the `LICENSE` file, the `pyproject.toml` metadata, and the README License section in agreement, so relicensing one without the others fails CI. A README-asset guard (`tests/test_readme.py`) fails the build if the README embeds a local image — a `docs/` screenshot or an `examples/` input — that is missing from the repo or not git-tracked (a broken image on GitHub). `.python-version` pins the interpreter to 3.12 so local `uv` and CI resolve the same runtime, and `[tool.uv] required-version` in `pyproject.toml` pins uv itself — `setup-uv` reads that key, so local and CI share one uv and the lockfile can't churn between them.
@@ -87,7 +96,7 @@ Pushing a `vX.Y.Z` tag triggers [a release workflow](.github/workflows/release.y
 
 ### Claude Code hooks
 
-This repo ships opt-in [Claude Code](https://claude.com/claude-code) hooks (in `.claude/`) that run the checks above automatically as you edit: format + lint-fix (`ruff`) and type-check (`ty`) on each Python change, `ruff format` on each Markdown change too (ruff formats Python fenced in `.md`, and CI checks it), the test suite (`pytest`) once at the end of a turn that touched app/test/theme code, and a guard that blocks `Edit`/`Write` to `.env` and `uv.lock` (it does not intercept `Bash` writes, and fails closed if `jq` is missing). They require [`jq`](https://jqlang.github.io/jq/) and activate on session start (run `/hooks` to review). `tests/test_hooks.py` covers their behavior; `.claude/settings.local.json` (personal overrides) is gitignored.
+This repo ships opt-in [Claude Code](https://claude.com/claude-code) hooks (in `.claude/`) that run the checks above automatically as you edit: format + lint-fix (`ruff`) and type-check (`ty`) on each Python change, `ruff format` on `.md`, `.pyi` and `.ipynb` too (the same set CI checks, so nothing is fixed only in CI), the test suite (`pytest`) once at the end of a turn that touched anything the suite asserts on, and a guard that blocks `Edit`/`Write` to `.env` and `uv.lock` (it does not intercept `Bash` writes, and fails closed if `jq` is missing). They require [`jq`](https://jqlang.github.io/jq/) and activate on session start (run `/hooks` to review). `tests/test_hooks.py` covers their behavior; `.claude/settings.local.json` (personal overrides) is gitignored.
 
 ## License
 
