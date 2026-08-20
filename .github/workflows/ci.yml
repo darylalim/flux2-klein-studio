@@ -5,43 +5,33 @@ on:
     branches: [main]
   pull_request:
 
-# A newer push on the same branch/PR cancels the in-flight run.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Least privilege: this job only reads public source and runs lint/type/test,
-# never writing to the repo, so drop GITHUB_TOKEN to read-only.
+# Read-only by default. The release job re-declares its own scope; a job-level
+# block REPLACES this one rather than merging, so the gate job stays read-only
+# even though the workflow can publish.
 permissions:
   contents: read
 
 jobs:
   ci:
     name: Lint, type-check & test (macOS / Apple Silicon)
-    # macos-14+ is arm64 (Apple Silicon), the app's target platform. Linux
-    # runners can't be used: mlx only ships a CUDA build for Linux, so
-    # `import mlx` fails on a GPU-less runner and the suite won't load.
-    # macOS runners are free for public repositories.
+    # Must stay Apple Silicon: uv.lock resolves mlx to a CUDA-only build for
+    # sys_platform == 'linux', so `import mlx` fails on any Linux runner.
     runs-on: macos-latest
-    # A hang (e.g. a stalled `uv sync`) fails fast instead of holding a runner
-    # for GitHub's 6-hour default.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        # No `version:` on purpose. setup-uv reads pyproject's
-        # [tool.uv] required-version when this input is empty, so the uv version
-        # has one source of truth shared with local development. Hardcoding it
-        # here would shadow that pin and let the two drift.
+        # No `version:` on purpose — setup-uv reads pyproject's [tool.uv]
+        # required-version only when this input is empty; hardcoding shadows it.
         uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true # caches the uv cache dir, keyed on uv.lock
 
       - name: Install dependencies
-        # --locked fails the build if uv.lock is stale (e.g. a version bump or
-        # dependency change that forgot `uv lock`), instead of silently
-        # re-resolving. Keeps the committed lockfile honest.
+        # --locked fails the build on a stale uv.lock instead of re-resolving.
         run: uv sync --locked
 
       - name: Ruff format
@@ -55,3 +45,112 @@ jobs:
 
       - name: Tests
         run: uv run pytest
+
+  # Releasing is a *consequence* of the gates, not a parallel event. `needs: ci`
+  # is the whole point: it is structurally impossible to publish a commit the
+  # four gates did not pass. The tag-push workflow this replaced could not know
+  # — two of the first three releases published before their own CI finished
+  # (v0.7.0 published 03:08:06Z; CI on the same SHA ran to 03:08:48Z).
+  release:
+    name: Publish release on version bump
+    needs: ci
+    # Pushes to main only. Pull requests run the gates but must never publish.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Never imports the app, so the CUDA-mlx-on-Linux constraint that pins the
+    # gate job to macOS does not apply here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Scoped to this job alone: a job-level block replaces the workflow grant,
+    # so `contents: write` exists here and nowhere else. Publishing a release
+    # (and the tag it creates) is the whole of what this needs.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The project's pinned interpreter, so `tomllib` is guaranteed present
+      # rather than trusted from the runner image.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      # The trigger is "pyproject declares a version with no tag yet", NOT
+      # "pyproject.toml changed in this push". A HEAD~1 diff is wrong here: it
+      # misses a bump that arrived in an earlier commit of a multi-commit push
+      # or behind a merge (verified: `git show 9039123~1:pyproject.toml` is
+      # 0.7.0, identical to HEAD, on a push this repo actually produced), and
+      # it has no HEAD~1 at all on a root commit. A tag-existence check is a
+      # pure function of (declared version, remote tags), so it is invariant
+      # under merges, squashes and force-pushes — and a run cancelled by
+      # `cancel-in-progress` is simply retried by the next push to main.
+      - name: Detect unreleased version
+        id: detect
+        run: |
+          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          # Shape-check before the value is ever used as a ref name.
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "::error::pyproject version '$version' is not MAJOR.MINOR.PATCH"
+              exit 1
+              ;;
+          esac
+          # `|| status=$?` is load-bearing, not style: Actions runs `run:` under
+          # `bash -e`, so a bare `--exit-code` miss (exit 2) would abort the
+          # step before the status could be read. In an OR list it does not.
+          status=0
+          git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1 || status=$?
+          # ls-remote exits 0 when the tag exists and 2 when it does not. Any
+          # other code is an error (network, auth) and must fail loudly rather
+          # than be read as "unreleased" and publish, or as "released" and skip.
+          case "$status" in
+            0)
+              echo "v$version is already released; nothing to do."
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              ;;
+            2)
+              echo "v$version is unreleased; publishing."
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::git ls-remote failed (exit $status); cannot tell if v$version is released"
+              exit 1
+              ;;
+          esac
+
+      # One API call creates the tag AND the release, so there is never a window
+      # where a tag exists without a release — the state the old two-step flow
+      # had to clean up after with `git push --delete`. --target pins both to
+      # the exact commit the gates passed.
+      #
+      # This must stay in THIS job. Splitting it — push a tag here, let a
+      # tag-triggered workflow publish — silently does nothing: GitHub does not
+      # start a workflow run for events raised by the default GITHUB_TOKEN, so
+      # the tag would land and no release would ever follow.
+      - name: Publish
+        if: steps.detect.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.detect.outputs.version }}
+          SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # A pre-release publishes with --prerelease so it never becomes the
+          # repo's "Latest". Matching a hyphen would be wrong: this version came
+          # from pyproject.toml, and uv writes PEP 440's canonical spelling —
+          # `uv version 0.9.0-rc1` stores `0.9.0rc1`, hyphen stripped (verified
+          # on the pinned uv 0.12.5). So the test is "anything that is not
+          # purely digits and dots", which catches 0.9.0rc1 / 1.0.0a2 /
+          # 0.8.0.dev1 / 0.8.0-rc1 alike. It also catches a .postN, which is
+          # deliberate slack: a post-release simply doesn't become Latest.
+          prerelease=""
+          case "$VERSION" in
+            *[!0-9.]*) prerelease="--prerelease" ;;
+          esac
+          gh release create "v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "v$VERSION" \
+            --target "$SHA" \
+            --generate-notes \
+            $prerelease

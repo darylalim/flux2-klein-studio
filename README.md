@@ -92,7 +92,11 @@ uv run pytest -m smoke   # Real model load + generation
 
 ### Releases
 
-Pushing a `vX.Y.Z` tag triggers [a release workflow](.github/workflows/release.yml) that first checks the tag matches the version declared in `pyproject.toml` — a mismatch fails the build instead of publishing a mislabeled release — and then publishes a [GitHub release](https://github.com/darylalim/flux2-klein-studio/releases) with auto-generated notes. `tests/test_release.py` locks the workflow's contract, the same way `tests/test_ci.py` locks CI. A cross-workflow guard (`tests/test_workflows.py`) additionally fails the build if any workflow's `run:` script interpolates a `${{ }}` expression directly — the GitHub Actions command-injection vector.
+Bump `version` in `pyproject.toml` and push to `main`. That is the whole ritual — `uv version --bump patch` does the bump and re-locks in one step, and [CI](.github/workflows/ci.yml)'s `release` job takes it from there: it runs only after all four gates pass, and publishes a [GitHub release](https://github.com/darylalim/flux2-klein-studio/releases) with auto-generated notes, tagging the exact commit that passed. It fires only when the declared version has no matching tag yet, so re-runs and unrelated pushes are no-ops, and a pull request never publishes.
+
+Two details are load-bearing. Because the job declares `needs: ci`, a commit that fails any gate cannot ship — the tag-triggered workflow this replaced had no way to know, and two of the first three releases published before their own CI run had finished. And the tag and the release are created by a single `gh release create --target` call rather than pushed separately: a ref pushed with the default `GITHUB_TOKEN` starts no workflow run, so splitting them would produce a tag, no release, and a green build. `tests/test_ci.py` locks both, and a cross-workflow guard (`tests/test_workflows.py`) fails the build if any workflow's `run:` script interpolates a `${{ }}` expression directly — the GitHub Actions command-injection vector — or pushes a git ref.
+
+Before bumping, run `uv run pytest -m smoke`. It loads real weights and is the only test that exercises the live mflux/mlx-vlm surface; no GitHub runner can run it, so it is a manual step by necessity.
 
 ### Claude Code hooks
 
