@@ -70,30 +70,6 @@ _CONFIG_PATH = _REPO_ROOT / ".streamlit" / "config.toml"
 # absolute path and stay independent of both.
 _APP_PATH = _REPO_ROOT / "streamlit_app.py"
 
-# WCAG 2.1 AA minimum contrast ratio for normal-size text (links, body, buttons).
-_WCAG_AA_NORMAL = 4.5
-
-
-def _load_theme():
-    """Return the [theme] table from the app's .streamlit/config.toml."""
-    with _CONFIG_PATH.open("rb") as fh:
-        return tomllib.load(fh)["theme"]
-
-
-def _relative_luminance(hex_color):
-    """WCAG relative luminance of a #rrggbb color."""
-    h = hex_color.lstrip("#")
-    srgb = [int(h[i : i + 2], 16) / 255 for i in (0, 2, 4)]
-    linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in srgb]
-    r, g, b = linear
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-
-def _contrast_ratio(fg, bg):
-    """WCAG contrast ratio between two #rrggbb colors (>= 1.0)."""
-    lo, hi = sorted((_relative_luminance(fg), _relative_luminance(bg)))
-    return (hi + 0.05) / (lo + 0.05)
-
 
 def _reload_app(mock_model, *, mock_edit_model=None, mock_vlm=None):
     """Reload app module with mocked heavy dependencies and passthrough cache."""
@@ -178,59 +154,29 @@ class TestConstants:
 
 
 class TestThemeConfig:
-    """Accessibility contract for .streamlit/config.toml.
+    """.streamlit/config.toml must declare no custom theme.
 
-    Theming is native (no CSS), so this palette *is* the UI's contrast story.
-    These tests lock it: a future color tweak that drops link, body-text, or
-    button contrast below WCAG AA fails in CI instead of shipping an unreadable
-    UI. (The dark linkColor override in particular exists only for contrast.)
+    The app ships Streamlit's stock light and dark themes, so the palette and
+    its contrast are Streamlit's contract, not this repo's. What needs locking
+    is the *absence*: any [theme] key makes this a custom theme, and a custom
+    theme with neither [theme.light] nor [theme.dark] populated collapses to a
+    single mode -- the frontend branches on `light || dark`, so one populated
+    variant keeps the switcher while a lone `font` populates neither and costs
+    it. Scope: this reads the committed file, so it cannot see a theme injected
+    at runtime (`--theme.base dark`, STREAMLIT_THEME_*, ~/.streamlit) -- which is
+    what the screenshot recipe in CLAUDE.md deliberately does.
     """
 
-    def test_light_and_dark_variants_defined(self):
-        # Both must exist or the in-app light/dark appearance switcher disappears.
-        theme = _load_theme()
-        assert "light" in theme
-        assert "dark" in theme
-
-    def test_dark_link_color_overrides_primary(self):
-        # Dark links must NOT inherit primaryColor: #7457FF on the dark
-        # background is 4.14:1 (under AA). The override exists to fix that, so a
-        # revert to the inherited default should fail here.
-        theme = _load_theme()
-        assert "linkColor" in theme["dark"]
-        assert theme["dark"]["linkColor"] != theme["dark"]["primaryColor"]
-
-    def test_link_contrast_meets_wcag_aa(self):
-        # Links inherit primaryColor unless linkColor overrides it, and can land
-        # on either the main or the secondary/widget background — lock both.
-        theme = _load_theme()
-        for mode in ("light", "dark"):
-            variant = theme[mode]
-            link = variant.get("linkColor", variant["primaryColor"])
-            for surface in ("backgroundColor", "secondaryBackgroundColor"):
-                ratio = _contrast_ratio(link, variant[surface])
-                assert ratio >= _WCAG_AA_NORMAL, (
-                    f"{mode} link {link} on {surface}: {ratio:.2f}:1"
-                )
-
-    def test_body_text_contrast_meets_wcag_aa(self):
-        # Text renders on both the main background and the secondary/widget
-        # surface (captions, st.info, st.status, widget fills), so lock both.
-        theme = _load_theme()
-        for mode in ("light", "dark"):
-            variant = theme[mode]
-            for surface in ("backgroundColor", "secondaryBackgroundColor"):
-                ratio = _contrast_ratio(variant["textColor"], variant[surface])
-                assert ratio >= _WCAG_AA_NORMAL, (
-                    f"{mode} text on {surface}: {ratio:.2f}:1"
-                )
-
-    def test_primary_button_text_contrast_meets_wcag_aa(self):
-        # Streamlit renders primary-button labels white on primaryColor.
-        theme = _load_theme()
-        for mode in ("light", "dark"):
-            ratio = _contrast_ratio("#ffffff", theme[mode]["primaryColor"])
-            assert ratio >= _WCAG_AA_NORMAL, f"{mode} button: {ratio:.2f}:1"
+    def test_no_custom_theme_is_declared(self):
+        assert _CONFIG_PATH.is_file(), (
+            f"{_CONFIG_PATH.name} is gone, and with it the only record of why "
+            "the theme is empty -- keep the file even though it sets nothing"
+        )
+        with _CONFIG_PATH.open("rb") as fh:
+            config = tomllib.load(fh)
+        assert "theme" not in config, (
+            f"custom theme declared in {_CONFIG_PATH.name}: {sorted(config['theme'])}"
+        )
 
 
 class TestModelLoading:
