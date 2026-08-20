@@ -1,13 +1,20 @@
 """Tests for the Claude Code hooks under .claude/.
 
-The hooks are plain bash + jq scripts wired up in ``.claude/settings.json``, so
-this suite drives them the way Claude Code does: it feeds the tool payload on
-stdin and asserts on the exit code and — for the guard — the JSON decision on
-stdout. A stubbed ``uv`` on ``PATH`` lets the routing of the format/type hooks be
-checked (which file types trigger the toolchain, which no-op) without paying for
-a real ruff/ty run. The test suite itself is gated at end of turn: a PostToolUse
-hook (mark-tests-pending.sh) drops a marker and the Stop hook (run-tests.sh)
-consumes it, so those two are tested via the marker rather than a per-edit run.
+The hooks are plain bash scripts wired up in ``.claude/settings.json``, so this
+suite drives them the way Claude Code does: the tool payload on stdin, asserting
+on the exit code and — for the guard — the JSON decision on stdout. A stubbed
+``uv`` on ``PATH`` locks which toolchain commands each hook would run, and in
+what order, without paying for a real ruff/ty/pytest run.
+
+Two rules keep this file from growing back into a transcription of the scripts:
+
+  * A test must be able to fail for a reason the script's own source does not
+    already make obvious. Reading a ``case`` statement back as one parametrized
+    case per arm moves in lockstep with the thing it mirrors and cannot detect
+    drift. Prefer external truth (real ruff, real git), cross-file locks, or
+    invariants no single script can express.
+  * Rationale lives in the hook script's header, not duplicated here. A test
+    comment earns its place only by naming the *failure* the test catches.
 """
 
 import json
@@ -21,35 +28,34 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _HOOKS_DIR = _REPO_ROOT / ".claude" / "hooks"
 _SETTINGS = _HOOKS_DIR.parent / "settings.json"
+_HOOK_PREFIX = "${CLAUDE_PROJECT_DIR}/.claude/hooks/"
 
-# The subprocess-driven tests need bash to run the scripts and jq (which the
-# parsing hooks shell out to); skip them cleanly on an environment that lacks
-# either rather than fail on an infrastructure gap. The wiring tests below are
-# pure JSON/filesystem checks and run regardless.
 _requires_shell = pytest.mark.skipif(
     shutil.which("bash") is None or shutil.which("jq") is None,
     reason="hook scripts require bash and jq",
 )
+_requires_git = pytest.mark.skipif(
+    shutil.which("git") is None,
+    reason="mark-tests-pending.sh derives its filter from git",
+)
+_requires_uv = pytest.mark.skipif(
+    shutil.which("uv") is None, reason="needs the project's ruff"
+)
 
-_HOOK_PREFIX = "${CLAUDE_PROJECT_DIR}/.claude/hooks/"
-
-
-def _run_hook(script, file_path, *, project_dir, env=None, tool_name="Edit"):
-    """Invoke a tool-event hook exactly like Claude Code: the payload on stdin.
-
-    ``CLAUDE_PROJECT_DIR`` is always set (the scripts reference it); ``env``
-    extends/overrides the child environment (e.g. a stubbed ``PATH``). Returns
-    the CompletedProcess so callers can assert on returncode/stdout/stderr.
-    """
-    payload = json.dumps(
-        {"tool_name": tool_name, "tool_input": {"file_path": str(file_path)}}
-    )
-    return _exec(script, payload, project_dir=project_dir, env=env)
-
-
-def _run_stop_hook(script, *, project_dir, env=None):
-    """Invoke a Stop hook: no tool payload (Stop receives none)."""
-    return _exec(script, "", project_dir=project_dir, env=env)
+_NOTEBOOK = {
+    "cells": [
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": ["x  =  1\n"],
+        }
+    ],
+    "metadata": {},
+    "nbformat": 4,
+    "nbformat_minor": 5,
+}
 
 
 def _exec(script, stdin, *, project_dir, env=None):
@@ -62,16 +68,33 @@ def _exec(script, stdin, *, project_dir, env=None):
         capture_output=True,
         text=True,
         env=child_env,
-        timeout=30,
+        timeout=60,
     )
 
 
-def _uv_stub_env(tmp_path, *, exit_code=0):
-    """Put a fake ``uv`` on ``PATH`` that records its args and exits ``exit_code``.
+def _run_hook(script, file_path, *, project_dir, env=None):
+    """Invoke a tool-event hook the way Claude Code does: payload on stdin."""
+    payload = json.dumps(
+        {"tool_name": "Edit", "tool_input": {"file_path": str(file_path)}}
+    )
+    return _exec(script, payload, project_dir=project_dir, env=env)
 
-    Returns ``(env, log_path)``. The stub appends each invocation's args to the
-    log, so a test can assert *whether* and *how* the real toolchain would be
-    invoked without actually running ruff/ty/pytest.
+
+def _run_stop_hook(script, *, project_dir, env=None):
+    """Invoke a Stop hook: no tool payload (Stop receives none)."""
+    return _exec(script, "", project_dir=project_dir, env=env)
+
+
+def _decision(result):
+    return json.loads(result.stdout)["hookSpecificOutput"]
+
+
+def _uv_stub_env(tmp_path, *, exit_code=0, fail_on=None):
+    """A fake ``uv`` on ``PATH`` that logs its args and exits ``exit_code``.
+
+    ``fail_on`` fails only the matching subcommand: run-tests.sh chains several
+    gates, so a blanket non-zero would always trip the first and leave the rest
+    untestable. Returns ``(env, log_path)``.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -81,19 +104,22 @@ def _uv_stub_env(tmp_path, *, exit_code=0):
     stub.write_text(
         "#!/usr/bin/env bash\n"
         'printf "%s\\n" "$*" >> "$STUB_UV_LOG"\n'
+        'if [[ -n "${STUB_UV_FAIL_ON:-}" && "$*" == *"$STUB_UV_FAIL_ON"* ]]; then\n'
+        "  exit 1\n"
+        "fi\n"
         'exit "${STUB_UV_EXIT:-0}"\n'
     )
     stub.chmod(0o755)
-    env = {
+    return {
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
         "STUB_UV_LOG": str(log),
         "STUB_UV_EXIT": str(exit_code),
-    }
-    return env, log
+        "STUB_UV_FAIL_ON": fail_on or "",
+    }, log
 
 
 def _no_jq_env(tmp_path):
-    """A PATH with bash/cat/basename but NOT jq, to exercise the fail-closed path."""
+    """A PATH with bash/cat/basename but NOT jq, for the degraded-guard path."""
     bin_dir = tmp_path / "nojq-bin"
     bin_dir.mkdir(exist_ok=True)
     for tool in ("bash", "cat", "basename"):
@@ -103,6 +129,17 @@ def _no_jq_env(tmp_path):
     return {"PATH": str(bin_dir)}
 
 
+def _real_ruff(*args):
+    """Run the project's actual ruff (never the stub), always cache-free."""
+    return subprocess.run(
+        ["uv", "run", "ruff", args[0], "--no-cache", *args[1:]],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
 def _project(tmp_path):
     """A throwaway project dir with a .claude/ subdir (for the marker)."""
     proj = tmp_path / "proj"
@@ -110,55 +147,69 @@ def _project(tmp_path):
     return proj
 
 
+def _git_project(tmp_path):
+    """A throwaway project that is a real git repo with the repo's own ignores.
+
+    mark-tests-pending.sh asks ``git check-ignore`` rather than consulting a
+    hardcoded list, so its tests must ask real git too — that externality is the
+    whole point of the rewrite.
+    """
+    proj = _project(tmp_path)
+    subprocess.run(
+        ["git", "init", "-q"], cwd=proj, check=True, capture_output=True, timeout=30
+    )
+    (proj / ".gitignore").write_text(
+        ".venv/\n__pycache__/\n.env\n.env.*\n!.env.example\nsecrets.toml\n"
+        ".claude/settings.local.json\n.claude/.tests-pending\n"
+    )
+    return proj
+
+
 def _commands_by_event():
     """{event: {script basename, ...}} across settings.json."""
     settings = json.loads(_SETTINGS.read_text())
     return {
-        event: {
-            Path(hook["command"]).name for group in groups for hook in group["hooks"]
-        }
+        event: {Path(h["command"]).name for g in groups for h in g["hooks"]}
         for event, groups in settings["hooks"].items()
     }
-
-
-def _matchers_for(event):
-    settings = json.loads(_SETTINGS.read_text())
-    return [group.get("matcher") for group in settings["hooks"][event]]
 
 
 def _all_commands():
     settings = json.loads(_SETTINGS.read_text())
     return [
-        hook["command"]
+        h["command"]
         for groups in settings["hooks"].values()
-        for group in groups
-        for hook in group["hooks"]
+        for g in groups
+        for h in g["hooks"]
     ]
+
+
+def _matchers_for(event):
+    return [g.get("matcher") for g in json.loads(_SETTINGS.read_text())["hooks"][event]]
 
 
 class TestHookWiring:
     """settings.json must reference real, executable scripts, bound to events."""
 
-    def test_settings_is_valid_json_with_expected_events(self):
-        settings = json.loads(_SETTINGS.read_text())
-        assert {"PreToolUse", "PostToolUse", "Stop"} <= set(settings["hooks"])
-
     def test_scripts_are_bound_to_the_correct_events(self):
+        # The one assertion that can catch a hook *disappearing*. Every other
+        # test iterates whatever settings.json lists, so a removed entry is
+        # invisible to them: delete the "Stop" block and the rest of this file
+        # stays green while ruff, ty and pytest go silently dead. Not the
+        # transcription this file avoids elsewhere — that mirrored a list inside
+        # the script under test; this pins config against the scripts on disk.
         by_event = _commands_by_event()
         assert by_event["PreToolUse"] == {"guard-paths.sh"}
-        assert by_event["PostToolUse"] == {
-            "ruff-format.sh",
-            "ty-check.sh",
-            "mark-tests-pending.sh",
-        }
+        assert by_event["PostToolUse"] == {"ruff-format.sh", "mark-tests-pending.sh"}
         assert by_event["Stop"] == {"run-tests.sh"}
 
     def test_commands_use_the_project_dir_prefix(self):
-        # Catches a prefix/variable typo like ${CLAUDE_PROJ_DIR}.
+        # A ${CLAUDE_PROJ_DIR} typo disables the whole system with no error.
         for cmd in _all_commands():
             assert cmd.startswith(_HOOK_PREFIX), cmd
 
     def test_referenced_scripts_exist_and_are_executable(self):
+        # A lost +x bit on a fresh clone silently disables a hook.
         commands = _all_commands()
         assert commands, "no hook commands configured"
         for cmd in commands:
@@ -168,90 +219,118 @@ class TestHookWiring:
 
     @pytest.mark.parametrize("event", ["PreToolUse", "PostToolUse"])
     def test_tool_matchers_cover_edit_write_multiedit(self, event):
-        # A matcher typo (or a dropped MultiEdit) would silently disable the
-        # hooks on those tools while the suite stayed green — assert all three.
+        # A dropped MultiEdit would silently disable the hooks on that tool.
         matchers = _matchers_for(event)
         assert matchers, f"{event} has no matcher groups"
         assert all(
             {"Edit", "Write", "MultiEdit"} <= set(m.split("|")) for m in matchers
-        ), f"{event} matchers miss a tool: {matchers}"
+        ), matchers
+
+    def test_no_whole_project_gate_runs_per_edit(self):
+        # PostToolUse fires once per edit, so a whole-project command there
+        # re-derives one fact N times a turn and surfaces a transient failure on
+        # every intermediate edit of a multi-file refactor. Greps what the wired
+        # scripts actually run, so it can fail for a reason the config does not show.
+        for cmd in _commands_by_event()["PostToolUse"]:
+            body = "\n".join(
+                line
+                for line in (_HOOKS_DIR / cmd).read_text().splitlines()
+                if not line.lstrip().startswith("#")
+            )
+            for needle in ("pytest", "ty check", "ruff check --fix .", "ruff format ."):
+                assert needle not in body, f"{cmd} runs '{needle}' per edit"
 
 
 @_requires_shell
 class TestGuardPaths:
-    """PreToolUse guard: deny writes to protected files, allow everything else."""
+    """PreToolUse guard: deny writes to protected files, allow everything else.
 
-    @pytest.mark.parametrize(
-        "name",
-        [".env", ".env.local", ".env.production", "uv.lock", "secrets.toml"],
-    )
+    One case per *case-statement arm* — `.env` (literal), `.env.*` (glob), and
+    the literal names — not one per filename.
+    """
+
+    @pytest.mark.parametrize("name", [".env", ".env.local", "uv.lock", "secrets.toml"])
     def test_protected_files_are_denied(self, name, tmp_path):
         result = _run_hook("guard-paths.sh", tmp_path / name, project_dir=tmp_path)
-        # The decision rides in the JSON, not the exit code.
-        assert result.returncode == 0
-        decision = json.loads(result.stdout)["hookSpecificOutput"]
+        assert result.returncode == 0  # the decision rides in the JSON
+        decision = _decision(result)
         assert decision["hookEventName"] == "PreToolUse"
         assert decision["permissionDecision"] == "deny"
         assert name in decision["permissionDecisionReason"]
 
-    @pytest.mark.parametrize("name", ["UV.LOCK", ".ENV", ".Env.Local"])
-    def test_matching_is_case_insensitive(self, name, tmp_path):
-        # macOS's default filesystem is case-insensitive, so a mis-cased path
-        # opens the real protected file and must still be denied.
-        result = _run_hook("guard-paths.sh", tmp_path / name, project_dir=tmp_path)
-        decision = json.loads(result.stdout)["hookSpecificOutput"]
-        assert decision["permissionDecision"] == "deny"
+    def test_matching_is_case_insensitive(self, tmp_path):
+        # macOS's filesystem is case-insensitive, so UV.LOCK opens the real file.
+        result = _run_hook("guard-paths.sh", tmp_path / "UV.LOCK", project_dir=tmp_path)
+        assert _decision(result)["permissionDecision"] == "deny"
 
-    @pytest.mark.parametrize(
-        "name", [".env.example", ".env.sample", ".env.template", ".env.dist"]
-    )
-    def test_secret_free_templates_are_allowed(self, name, tmp_path):
-        result = _run_hook("guard-paths.sh", tmp_path / name, project_dir=tmp_path)
-        assert result.returncode == 0
-        assert result.stdout.strip() == ""  # not denied
-
-    @pytest.mark.parametrize(
-        "name",
-        # "notes.env" proves only true dotenv files are blocked, not any *.env.
-        ["streamlit_app.py", "tests/test_app.py", "notes.env", "README.md"],
-    )
-    def test_ordinary_files_are_allowed(self, name, tmp_path):
-        result = _run_hook("guard-paths.sh", tmp_path / name, project_dir=tmp_path)
-        assert result.returncode == 0
-        assert result.stdout.strip() == ""  # no decision -> default permission flow
-
-    def test_missing_file_path_is_a_noop(self, tmp_path):
-        # A tool call with no file_path (e.g. Bash) is defended by jq's `// empty`.
-        result = _exec(
-            "guard-paths.sh",
-            json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
-            project_dir=tmp_path,
+    def test_secret_free_template_is_allowed(self, tmp_path):
+        # The template arm must be reached before the .env.* deny arm.
+        result = _run_hook(
+            "guard-paths.sh", tmp_path / ".env.example", project_dir=tmp_path
         )
         assert result.returncode == 0
         assert result.stdout.strip() == ""
 
-    def test_fails_closed_when_jq_is_missing(self, tmp_path):
-        # Without jq the guard cannot parse the payload, so it must DENY rather
-        # than silently allow a protected write through.
+    def test_ordinary_file_is_allowed(self, tmp_path):
+        # "notes.env" proves only true dotenv files are blocked, not any *.env.
+        result = _run_hook(
+            "guard-paths.sh", tmp_path / "notes.env", project_dir=tmp_path
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_denies_protected_paths_outside_the_project(self, tmp_path):
+        # Deliberate: this is the only hook with no ${CLAUDE_PROJECT_DIR}
+        # containment check. An out-of-repo .env is still a secrets file git
+        # cannot restore, and adding containment could only remove protection.
+        result = _run_hook(
+            "guard-paths.sh", "/somewhere/else/.env", project_dir=tmp_path / "proj"
+        )
+        assert _decision(result)["permissionDecision"] == "deny"
+
+    @pytest.mark.parametrize("name", [".env", "uv.lock"])
+    def test_still_denies_protected_paths_without_jq(self, name, tmp_path):
+        # Degraded but not disabled: the path is extracted with bash string ops.
         result = _run_hook(
             "guard-paths.sh",
-            tmp_path / "anything.txt",
+            tmp_path / name,
             project_dir=tmp_path,
             env=_no_jq_env(tmp_path),
         )
-        decision = json.loads(result.stdout)["hookSpecificOutput"]
-        assert decision["permissionDecision"] == "deny"
-        assert "jq" in decision["permissionDecisionReason"]
+        assert _decision(result)["permissionDecision"] == "deny"
+
+    def test_missing_jq_does_not_block_ordinary_files(self, tmp_path):
+        # It used to deny EVERY Edit/Write/MultiEdit without jq — a protection
+        # surface of four filenames with a blast radius of 100% of edits.
+        result = _run_hook(
+            "guard-paths.sh",
+            tmp_path / "streamlit_app.py",
+            project_dir=tmp_path,
+            env=_no_jq_env(tmp_path),
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_unreadable_payload_without_jq_is_denied(self, tmp_path):
+        # The surviving fail-closed case, and an inverted default worth pinning:
+        # no path means a protected write cannot be ruled out, so deny. The
+        # natural refactor (`command -v jq || exit 0`) flips this to permit.
+        result = _exec(
+            "guard-paths.sh",
+            "not json at all",
+            project_dir=tmp_path,
+            env=_no_jq_env(tmp_path),
+        )
+        assert _decision(result)["permissionDecision"] == "deny"
+        assert "jq" in _decision(result)["permissionDecisionReason"]
 
 
 @_requires_shell
 class TestRuffFormatHook:
-    """PostToolUse: format edited in-project files ruff handles, else no-op."""
+    """PostToolUse: format the edited in-project file, else no-op."""
 
-    # `ruff check` handles .pyi and .ipynb as well as .py, so all three get the
-    # lint-fix pass; only Markdown is format-only (see the test below).
-    @pytest.mark.parametrize("name", ["mod.py", "stub.pyi", "nb.ipynb"])
-    def test_formats_and_lint_fixes_python_scoped_to_that_file(self, name, tmp_path):
+    @pytest.mark.parametrize("name", ["mod.py", "doc.md", "nb.ipynb"])
+    def test_formats_scoped_to_that_file_without_lint_fixing(self, name, tmp_path):
         proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
         target = proj / name
@@ -260,105 +339,64 @@ class TestRuffFormatHook:
         assert result.returncode == 0
         logged = log.read_text()
         assert "ruff format" in logged
-        assert "ruff check --fix" in logged
         assert str(target) in logged  # scoped to the edited file, not the repo
-
-    def test_formats_markdown_without_lint_fixing_it(self, tmp_path):
-        # `ruff format` (>=0.16) formats Python fenced in Markdown and CI checks
-        # the repo root, so docs are in scope here or the two would disagree.
-        # `ruff check` has no Markdown support, so the lint-fix pass must not run.
-        proj = _project(tmp_path)
-        env, log = _uv_stub_env(tmp_path)
-        md = proj / "README.md"
-        md.write_text("# hi\n")
-        result = _run_hook("ruff-format.sh", md, project_dir=proj, env=env)
-        assert result.returncode == 0
-        logged = log.read_text()
-        assert "ruff format" in logged
-        assert str(md) in logged  # scoped to the edited file, not the repo
+        # `--fix` deletes code and would race a multi-edit refactor; it lives in
+        # the Stop hook, which formats again after it.
         assert "ruff check" not in logged
 
     @pytest.mark.parametrize(
-        "name",
-        # The mis-cased entries are the point: ruff picks its parser from the
-        # extension it is handed and parses anything unrecognized as Python
-        # source. On a case-insensitive filesystem a mis-cased path opens the
-        # real file, so handing ruff a NB.IPYNB rewrites the notebook's JSON as
-        # formatted Python and destroys it. These must no-op, not reach ruff.
-        [
-            "notes.txt",
-            "settings.json",
-            "pyproject.toml",
-            "README.MD",
-            "NB.IPYNB",
-            "STUB.PYI",
-        ],
+        "name", ["settings.json", "notes.txt", "README.MD", "NB.IPYNB", "STUB.PYI"]
     )
-    def test_skips_file_ruff_does_not_format(self, name, tmp_path):
+    def test_skips_what_ruff_would_destroy(self, name, tmp_path):
+        # Ruff picks its parser from the extension it is handed and parses
+        # anything unrecognized as Python — and JSON is valid Python expression
+        # syntax, so a settings.json handed to it is silently rewritten rather
+        # than rejected. The mis-cased names are the same hazard reached through
+        # macOS's case-insensitive filesystem, where NB.IPYNB opens the notebook.
         proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
-        other = proj / name
-        other.write_text("# hi\n")
-        result = _run_hook("ruff-format.sh", other, project_dir=proj, env=env)
+        (proj / name).write_text("# hi\n")
+        result = _run_hook("ruff-format.sh", proj / name, project_dir=proj, env=env)
         assert result.returncode == 0
         assert log.read_text() == ""  # uv never invoked
 
-    @pytest.mark.parametrize(
-        "name", ["ghost.py", "ghost.md", "ghost.pyi", "ghost.ipynb"]
-    )
-    def test_skips_nonexistent_file(self, name, tmp_path):
+    def test_skips_nonexistent_file(self, tmp_path):
         proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
-        result = _run_hook("ruff-format.sh", proj / name, project_dir=proj, env=env)
+        result = _run_hook(
+            "ruff-format.sh", proj / "ghost.py", project_dir=proj, env=env
+        )
         assert result.returncode == 0
         assert log.read_text() == ""
 
-    @pytest.mark.parametrize(
-        "name", ["outside.py", "outside.md", "outside.pyi", "outside.ipynb"]
-    )
-    def test_skips_file_outside_the_project(self, name, tmp_path):
-        # An edit to a formattable file outside the repo must not be reformatted.
+    def test_skips_file_outside_the_project(self, tmp_path):
         proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
-        outside = tmp_path / name
+        outside = tmp_path / "outside.py"
         outside.write_text("x=1\n")
         result = _run_hook("ruff-format.sh", outside, project_dir=proj, env=env)
         assert result.returncode == 0
         assert log.read_text() == ""
 
     def test_is_non_blocking(self, tmp_path):
-        # Even if ruff "fails", the formatter hook must never block (exit 0).
+        # The deliberate opposite of the Stop hook's exit 2.
         proj = _project(tmp_path)
         env, _ = _uv_stub_env(tmp_path, exit_code=1)
-        py = proj / "mod.py"
-        py.write_text("x=1\n")
-        result = _run_hook("ruff-format.sh", py, project_dir=proj, env=env)
+        (proj / "mod.py").write_text("x=1\n")
+        result = _run_hook("ruff-format.sh", proj / "mod.py", project_dir=proj, env=env)
         assert result.returncode == 0
 
 
-@pytest.mark.skipif(shutil.which("uv") is None, reason="needs the project's ruff")
+@_requires_uv
 class TestRuffHandlesTheHookedExtensions:
-    """The real ruff must reformat every extension ruff-format.sh routes to it.
+    """The real ruff must behave as ruff-format.sh and run-tests.sh assume.
 
-    The hook tests above drive a stubbed ``uv``: they lock *that* ruff is
-    invoked, not that ruff does anything once it is. If a future ruff dropped
-    Markdown or notebook formatting, those tests would stay green while the hook
-    silently did nothing and CI's ``ruff format --check .`` diverged from it all
-    over again. This runs the project's actual ruff once per routed extension to
-    pin the assumption the hook rests on. (``pyproject.toml`` declares the
-    matching ``ruff>=0.16`` floor.)
+    Every other test here drives a stubbed ``uv``: they lock *that* ruff is
+    invoked, not what it does once it is. If a future ruff dropped Markdown or
+    notebook formatting, those would stay green while the hook silently did
+    nothing and CI's ``ruff format --check .`` diverged from it all over again.
+    The only tests in this file exercising something the repo does not control.
     """
-
-    @staticmethod
-    def _ruff_format(target):
-        subprocess.run(
-            ["uv", "run", "ruff", "format", "--no-cache", str(target)],
-            cwd=_REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=120,
-        )
 
     @pytest.mark.parametrize(
         ("name", "source", "expected"),
@@ -373,111 +411,70 @@ class TestRuffHandlesTheHookedExtensions:
     def test_ruff_reformats(self, name, source, expected, tmp_path):
         target = tmp_path / name
         target.write_text(source)
-        self._ruff_format(target)
+        _real_ruff("format", str(target))
         assert expected in target.read_text()
 
     def test_ruff_reformats_notebook_cells_in_place(self, tmp_path):
-        # .ipynb is JSON, so assert on the cell source *and* that the envelope
-        # still parses: ruff handed a notebook under an extension it does not
-        # recognize rewrites the JSON as a Python dict literal, which would
-        # leave the expected substring present but the notebook unreadable.
+        # Assert the envelope still parses, not just the cell text: ruff handed
+        # a notebook under an unrecognized extension rewrites the JSON as a
+        # Python dict literal, leaving the substring present but the file dead.
         nb = tmp_path / "nb.ipynb"
-        nb.write_text(
-            json.dumps(
-                {
-                    "cells": [
-                        {
-                            "cell_type": "code",
-                            "execution_count": None,
-                            "metadata": {},
-                            "outputs": [],
-                            "source": ["x  =  1\n"],
-                        }
-                    ],
-                    "metadata": {
-                        "kernelspec": {
-                            "display_name": "Python 3",
-                            "language": "python",
-                            "name": "python3",
-                        },
-                        "language_info": {"name": "python", "version": "3.12.0"},
-                    },
-                    "nbformat": 4,
-                    "nbformat_minor": 5,
-                }
-            )
-        )
-        self._ruff_format(nb)
+        nb.write_text(json.dumps(_NOTEBOOK))
+        _real_ruff("format", str(nb))
         loaded = json.loads(nb.read_text())  # still a notebook, not Python
         assert "".join(loaded["cells"][0]["source"]).strip() == "x = 1"
 
+    def test_lint_fix_must_run_before_format(self, tmp_path):
+        # The verified bug the ruff split exists to prevent. `ruff check --fix`
+        # removing an unused import strands the blank line that followed it, and
+        # `ruff format --check` — CI's gate — then rejects the file. Formatter
+        # first is the red build the old PostToolUse hook caused silently.
+        target = tmp_path / "mod.py"
+        source = "import contextlib\n\nx = 1\n"
+        fix = ("check", "--fix", "--select", "F401", str(target))
+        fmt = ("format", str(target))
 
-@_requires_shell
-class TestTyCheckHook:
-    """PostToolUse: type-check on in-project Python edits; exit 2 on failure."""
+        def rejected_by_ci():
+            return _real_ruff("format", "--check", str(target)).returncode != 0
 
-    def test_type_checks_after_python_edit(self, tmp_path):
-        proj = _project(tmp_path)
-        env, log = _uv_stub_env(tmp_path)
-        result = _run_hook("ty-check.sh", proj / "mod.py", project_dir=proj, env=env)
-        assert result.returncode == 0
-        assert "ty check" in log.read_text()
+        target.write_text(source)
+        _real_ruff(*fmt)
+        _real_ruff(*fix)
+        assert rejected_by_ci(), (
+            "format-then-fix no longer strands a blank line; the Stop hook's "
+            "ordering comment and this guard can be revisited"
+        )
 
-    def test_skips_non_python_file(self, tmp_path):
-        proj = _project(tmp_path)
-        env, log = _uv_stub_env(tmp_path)
-        result = _run_hook("ty-check.sh", proj / "README.md", project_dir=proj, env=env)
-        assert result.returncode == 0
-        assert log.read_text() == ""
-
-    def test_skips_file_outside_the_project(self, tmp_path):
-        proj = _project(tmp_path)
-        env, log = _uv_stub_env(tmp_path)
-        outside = tmp_path / "outside.py"
-        result = _run_hook("ty-check.sh", outside, project_dir=proj, env=env)
-        assert result.returncode == 0
-        assert log.read_text() == ""
-
-    def test_failure_blocks_with_exit_2_and_neutral_wording(self, tmp_path):
-        proj = _project(tmp_path)
-        env, _ = _uv_stub_env(tmp_path, exit_code=1)
-        result = _run_hook("ty-check.sh", proj / "mod.py", project_dir=proj, env=env)
-        assert result.returncode == 2  # surfaced back to Claude as an error
-        # Exit-code-agnostic wording: an env failure isn't mislabeled a type error.
-        assert "ty check failed" in result.stderr
+        target.write_text(source)
+        _real_ruff(*fix)
+        _real_ruff(*fmt)
+        assert not rejected_by_ci()
 
 
 @_requires_shell
+@_requires_git
 class TestMarkTestsPendingHook:
-    """PostToolUse: drop the end-of-turn marker for suite-relevant edits."""
+    """PostToolUse: arm the end-of-turn marker, per real ``git check-ignore``."""
 
     def _marker(self, proj):
         return proj / ".claude" / ".tests-pending"
 
-    # One entry per test module that reads a repo file: if the suite asserts
-    # on it, editing it must arm the end-of-turn pytest run. Drift here is
-    # silent -- CI still fails, but the local loop goes quiet.
     @pytest.mark.parametrize(
         "rel",
         [
             "streamlit_app.py",
-            "tests/test_app.py",
-            ".streamlit/config.toml",
-            ".github/workflows/ci.yml",
-            ".github/workflows/release.yml",
-            ".github/release.yml",
-            ".claude/settings.json",
-            ".claude/hooks/ruff-format.sh",
-            "README.md",
-            "docs/screenshot-light.png",
-            "examples/woman1.webp",
-            "pyproject.toml",
-            "LICENSE",
-            ".python-version",
+            # A tracked path in a directory the old thirteen globs never listed.
+            # Verified against the old script: this did not arm. (A new module
+            # under tests/ *did*, via `*/tests/*` — the fail-open case was new
+            # directories, not new files in known ones.)
+            "assets/logo.svg",
+            # Tracked, so test_secrets.py scans it; the old list wrongly
+            # excluded it on the claim that no test reads CLAUDE.md.
+            "CLAUDE.md",
         ],
     )
-    def test_marks_pending_for_covered_files(self, rel, tmp_path):
-        proj = _project(tmp_path)
+    def test_arms_for_tracked_paths(self, rel, tmp_path):
+        proj = _git_project(tmp_path)
         result = _run_hook("mark-tests-pending.sh", proj / rel, project_dir=proj)
         assert result.returncode == 0
         assert self._marker(proj).exists()
@@ -485,59 +482,105 @@ class TestMarkTestsPendingHook:
     @pytest.mark.parametrize(
         "rel",
         [
-            # No test reads CLAUDE.md -- it is covered by `ruff format
-            # --check`, which is ruff-format.sh's job, not pytest's. Listing
-            # it here keeps that exclusion deliberate rather than an oversight.
-            "CLAUDE.md",
-            # Personal permission overrides; gitignored and unasserted.
             ".claude/settings.local.json",
-            "notes.txt",
-            ".gitignore",
+            ".env",
+            "__pycache__/streamlit_app.cpython-312.pyc",
         ],
     )
-    def test_no_marker_for_unrelated_edit(self, rel, tmp_path):
-        proj = _project(tmp_path)
+    def test_no_marker_for_gitignored_path(self, rel, tmp_path):
+        proj = _git_project(tmp_path)
         result = _run_hook("mark-tests-pending.sh", proj / rel, project_dir=proj)
         assert result.returncode == 0
         assert not self._marker(proj).exists()
 
+    def test_arms_when_git_cannot_answer(self, tmp_path):
+        # Fail-closed. `git check-ignore` exits 128 outside a repo; an
+        # unanswerable question must arm the suite, not skip it. The natural
+        # refactor (treat any non-zero as "skip") inverts this silently.
+        proj = _project(tmp_path)  # deliberately NOT a git repo
+        result = _run_hook(
+            "mark-tests-pending.sh", proj / "streamlit_app.py", project_dir=proj
+        )
+        assert result.returncode == 0
+        assert self._marker(proj).exists()
+
+    def test_no_marker_for_git_internals(self, tmp_path):
+        proj = _git_project(tmp_path)
+        result = _run_hook(
+            "mark-tests-pending.sh", proj / ".git" / "config", project_dir=proj
+        )
+        assert result.returncode == 0
+        assert not self._marker(proj).exists()
+
     def test_no_marker_for_file_outside_project(self, tmp_path):
-        proj = _project(tmp_path)
-        outside = tmp_path / "streamlit_app.py"
-        result = _run_hook("mark-tests-pending.sh", outside, project_dir=proj)
+        proj = _git_project(tmp_path)
+        result = _run_hook(
+            "mark-tests-pending.sh", tmp_path / "streamlit_app.py", project_dir=proj
+        )
         assert result.returncode == 0
         assert not self._marker(proj).exists()
 
 
 @_requires_shell
 class TestRunTestsHook:
-    """Stop hook: run the suite once per turn iff a marker is pending."""
+    """Stop hook: format every turn; --fix, ty and pytest once, iff pending."""
 
     def _marker(self, proj):
         return proj / ".claude" / ".tests-pending"
 
-    def test_runs_pytest_and_consumes_marker_when_pending(self, tmp_path):
+    def test_runs_every_gate_when_pending(self, tmp_path):
         proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
         self._marker(proj).write_text("")
         result = _run_stop_hook("run-tests.sh", project_dir=proj, env=env)
         assert result.returncode == 0
-        assert "pytest" in log.read_text()
+        logged = log.read_text()
+        for gate in ("ruff check --fix .", "ruff format .", "ty check .", "pytest"):
+            assert gate in logged, f"{gate} not run"
         assert not self._marker(proj).exists()  # consumed -> loop-safe
 
-    def test_noop_when_not_pending(self, tmp_path):
+    def test_a_format_pass_always_follows_the_lint_fix(self, tmp_path):
+        # `--fix` strands a blank line where it removed an unused import, so a
+        # format must come AFTER it or CI's `ruff format --check .` rejects the
+        # result. `rindex`: an unconditional format also runs before the gate,
+        # so the invariant is that one *follows* the fix, not that none precedes.
+        proj = _project(tmp_path)
+        env, log = _uv_stub_env(tmp_path)
+        self._marker(proj).write_text("")
+        _run_stop_hook("run-tests.sh", project_dir=proj, env=env)
+        logged = log.read_text()
+        assert logged.rindex("ruff format .") > logged.index("ruff check --fix .")
+
+    def test_formats_but_skips_the_expensive_gates_when_not_pending(self, tmp_path):
         proj = _project(tmp_path)
         env, log = _uv_stub_env(tmp_path)
         result = _run_stop_hook("run-tests.sh", project_dir=proj, env=env)
         assert result.returncode == 0
-        assert log.read_text() == ""  # pytest never invoked
+        logged = log.read_text()
+        assert "ruff format ." in logged  # layout only: safe unvalidated
+        # `--fix` deletes code, and on a turn with no marker ty and pytest never
+        # run, so nothing would validate a tree-wide rewrite.
+        assert "ruff check --fix" not in logged
+        assert "pytest" not in logged
+        assert "ty check" not in logged
 
-    def test_failure_blocks_with_exit_2_and_clears_marker(self, tmp_path):
+    def test_ty_failure_blocks_with_exit_2_and_clears_marker(self, tmp_path):
         proj = _project(tmp_path)
-        env, _ = _uv_stub_env(tmp_path, exit_code=1)
+        env, log = _uv_stub_env(tmp_path, fail_on="ty check")
+        self._marker(proj).write_text("")
+        result = _run_stop_hook("run-tests.sh", project_dir=proj, env=env)
+        assert result.returncode == 2  # surfaced back to Claude as an error
+        # Exit-code-agnostic wording: an env failure isn't mislabeled a type error.
+        assert "ty check failed" in result.stderr
+        assert "pytest" not in log.read_text()  # fails fast, before the 14s suite
+        assert not self._marker(proj).exists()
+
+    def test_pytest_failure_blocks_with_exit_2_and_clears_marker(self, tmp_path):
+        proj = _project(tmp_path)
+        env, _ = _uv_stub_env(tmp_path, fail_on="pytest")
         self._marker(proj).write_text("")
         result = _run_stop_hook("run-tests.sh", project_dir=proj, env=env)
         assert result.returncode == 2
         assert "pytest run failed" in result.stderr
-        # Marker cleared even on failure, so a no-edit follow-up turn won't loop.
+        # Cleared even on failure, so a no-edit follow-up turn won't loop.
         assert not self._marker(proj).exists()

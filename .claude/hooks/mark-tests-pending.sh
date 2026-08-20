@@ -3,28 +3,27 @@
 #
 # The full suite is expensive to run after every edit, so instead of running it
 # here this hook just drops a marker when an edit touches something the suite
-# asserts on. The Stop hook (run-tests.sh) consumes the marker and runs pytest
-# once, at the end of the turn.
+# asserts on. The Stop hook (run-tests.sh) consumes the marker and runs the
+# gates once, at the end of the turn.
 #
-# The covered set below is the union of what the test modules read, and must be
-# kept in step with them or an edit lands with the suite never run locally (CI
-# still catches it; the local loop just goes quiet):
+# The covered set is DERIVED, not transcribed. It used to be a hand-maintained
+# allow-list of thirteen globs that had to be kept in step with what the nine
+# test modules read — a coupling with two defects. It was fail-OPEN: any tracked
+# path outside those globs armed nothing until someone remembered to edit this
+# file, and the local loop went silently dark. (Verified against the old script:
+# a new `assets/logo.svg` or `scripts/build.py` did not arm. A new module under
+# `tests/` did, via the `*/tests/*` glob — the failure was new *directories*,
+# not new files in known ones.) And its test checked the list against a
+# hardcoded copy of the same list, so it could not fail except in lockstep with
+# the script it mirrored.
 #
-#   streamlit_app.py, .streamlit/config.toml -> test_streamlit_app.py
-#                                               (TestThemeConfig asserts the
-#                                               theme's WCAG contrast)
-#   tests/                                   -> all of them
-#   .github/workflows/, .github/release.yml  -> test_ci / test_release /
-#                                               test_workflows
-#   .claude/settings.json, .claude/hooks/    -> test_hooks.py
-#   README.md, docs/, examples/              -> test_readme.py (it asserts every
-#                                               local image the README embeds
-#                                               exists on disk)
-#   pyproject.toml, LICENSE                  -> test_license.py, test_ci.py
-#   .python-version                          -> test_ci.py
-#
-# CLAUDE.md is deliberately absent: no test reads it. It is covered by `ruff
-# format --check`, which is ruff-format.sh's job, not pytest's.
+# `git check-ignore` replaces it with external truth. tests/test_secrets.py
+# scans `git ls-files`, so EVERY tracked file is already suite-relevant — the
+# covered set is not a curated union of modules, it is simply "not gitignored".
+# That makes the rule fail-CLOSED: an unrecognized path arms the suite rather
+# than skipping it, so a new test module can never again land unrun locally.
+# What stays excluded is what git already ignores: .venv/, __pycache__/, the
+# caches, a local .env, .claude/settings.local.json, and the marker itself.
 set -uo pipefail
 
 command -v jq >/dev/null 2>&1 || exit 0
@@ -41,15 +40,16 @@ case "$file" in
   *) exit 0 ;;
 esac
 
-# Only files the suite actually covers (see the map above).
+# git's own plumbing is not project source; nothing asserts on it.
 case "$file" in
-  *streamlit_app.py | */tests/* | */.streamlit/config.toml) ;;
-  */.github/workflows/* | */.github/release.yml) ;;
-  */.claude/settings.json | */.claude/hooks/*) ;;
-  */README.md | */docs/* | */examples/*) ;;
-  */pyproject.toml | */LICENSE | */.python-version) ;;
-  *) exit 0 ;;
+  "${proj%/}"/.git/*) exit 0 ;;
 esac
+
+# Arm unless git ignores the path. Exit 0 means ignored (skip); 1 (not ignored)
+# and 128 (no git, or no repo) both fall through and arm — fail closed.
+if git -C "${proj%/}" check-ignore -q -- "$file" 2>/dev/null; then
+  exit 0
+fi
 
 : > "${proj%/}/.claude/.tests-pending" 2>/dev/null || true
 exit 0
