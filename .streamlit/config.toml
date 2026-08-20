@@ -1,27 +1,9 @@
-# Theme for FLUX.2 Klein Studio. Native theming only — set colors here, not via
-# CSS. Both light and dark are defined so the in-app appearance switcher stays
-# available; shared options (font, radius) live in [theme] and apply to both.
-
-[theme]
-font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-baseRadius = "8px"
-linkUnderline = false
-
-[theme.light]
-primaryColor = "#6750F5"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f4f4f8"
-textColor = "#1b1b29"
-borderColor = "#e4e4ee"
-
-[theme.dark]
-primaryColor = "#7457FF"
-backgroundColor = "#0f0f15"
-secondaryBackgroundColor = "#1a1a24"
-textColor = "#e8e8f0"
-borderColor = "#2b2b3a"
-# Links default to primaryColor, but #7457FF on this background is only 4.14:1 —
-# under WCAG AA (4.5:1) for text. A lighter purple restores contrast (6.6:1)
-# while keeping the brand hue. Light mode's link (= primary) already passes at
-# 5.2:1, so only dark needs the override.
-linkColor = "#9d86ff"
+# No [theme] section on purpose. With no custom theme declared, the app renders
+# Streamlit's stock light and dark themes and the in-app appearance switcher
+# picks between them.
+#
+# Any [theme] key added back here makes this a *custom* theme, and a custom
+# theme without both [theme.light] and [theme.dark] locks the app to a single
+# mode -- so even a lone `font` would silently cost the light/dark switch. Set
+# colors here rather than via CSS if a custom theme is ever wanted again, and
+# define both variants. Locked by TestThemeConfig.

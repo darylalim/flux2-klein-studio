@@ -10,7 +10,7 @@ Streamlit application for generating and editing images using Black Forest Labs 
   <img src="docs/screenshot-light.png" width="49%" alt="FLUX.2 Klein Studio — light theme">
   <img src="docs/screenshot-dark.png" width="49%" alt="FLUX.2 Klein Studio — dark theme">
 </p>
-<p align="center"><sub>Native light and dark themes (left / right)</sub></p>
+<p align="center"><sub>Light and dark themes (left / right)</sub></p>
 
 ## Features
 
@@ -25,7 +25,7 @@ Streamlit application for generating and editing images using Black Forest Labs 
 - Clickable examples — text-to-image prompts plus an editing example with bundled input images (loading one replaces any manual upload)
 - Per-step progress bar shown inside the output frame during inference, with labeled spinners for first-time model loads and prompt enhancement
 - Configurable seed, dimensions, guidance scale, and inference steps in Advanced settings
-- Native light/dark theme via `.streamlit/config.toml` (no custom CSS), with WCAG AA-compliant link contrast in both modes
+- Streamlit's default light and dark themes — no custom theme or CSS, so the in-app appearance switcher picks the mode
 - Graceful failure handling — empty runs are blocked; unreadable uploads and generation errors surface inline instead of crashing the app
 
 ## Requirements
