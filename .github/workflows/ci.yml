@@ -23,12 +23,20 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
         # No `version:` on purpose — setup-uv reads pyproject's [tool.uv]
         # required-version only when this input is empty; hardcoding shadows it.
-        uses: astral-sh/setup-uv@v6
+        # (Still true at v10, whose src/version/file-parser.ts reads the same
+        # pyproject key, so this survives a future bump.)
+        #
+        # `@v7` is CURRENT, not stale: setup-uv stopped publishing floating
+        # major tags after v7, so although the latest release is v10.x there is
+        # no `@v10` to track — above v7 the only options are an exact version or
+        # a SHA, both of which need a bump every release. v7 is the newest ref
+        # that still auto-patches.
+        uses: astral-sh/setup-uv@v7
 
       - name: Install dependencies
         # --locked fails the build on a stale uv.lock instead of re-resolving.
@@ -66,12 +74,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The project's pinned interpreter, so `tomllib` is guaranteed present
       # rather than trusted from the runner image.
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version-file: .python-version
 

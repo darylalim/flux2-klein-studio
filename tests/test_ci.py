@@ -32,6 +32,7 @@ the boolean ``True``. ``_load_workflow`` normalizes that back so the trigger
 table is reachable as ``workflow["on"]``.
 """
 
+import re
 import subprocess
 import tomllib
 from pathlib import Path
@@ -121,6 +122,32 @@ class TestCIWorkflow:
         assert set(triggers) <= {"push", "pull_request"}, (
             f"ci.yml declares an unexpected trigger: {sorted(triggers)}"
         )
+
+    def test_actions_pin_a_floating_major_tag(self):
+        # Unguarded until now: `astral-sh/setup-uv@main` passed, because the
+        # only assertion touching an action ref was a bare startswith on its
+        # name. A branch ref moves under you between runs; a major tag only
+        # receives patches.
+        #
+        # This repo deliberately tracks floating majors rather than SHA- or
+        # exact-pinning, because it runs no dependabot and an exact pin with
+        # nothing to bump it rots silently. Note `setup-uv@v7` is the newest
+        # ref that can be written this way at all — setup-uv stopped publishing
+        # floating majors after v7 — so if this assertion ever has to be
+        # relaxed, that is the reason, and it should be relaxed deliberately.
+        seen = 0
+        for name, job in _load_workflow()["jobs"].items():
+            for step in job["steps"]:
+                ref = step.get("uses")
+                if not ref:
+                    continue
+                seen += 1
+                assert re.fullmatch(r"[\w.-]+/[\w.-]+@v\d+", ref), (
+                    f"job '{name}' uses {ref!r}; actions must pin a floating "
+                    "major tag (owner/repo@vN), not a branch, a bare name, or "
+                    "an exact version that nothing will bump"
+                )
+        assert seen, "no `uses:` steps found; the pinning rule is unverified"
 
     def test_test_and_typecheck_jobs_run_on_macos(self):
         # Load-bearing: uv.lock resolves mlx to a CUDA-only build on Linux, so
