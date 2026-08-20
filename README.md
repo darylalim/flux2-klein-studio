@@ -30,7 +30,7 @@ Streamlit application for generating and editing images using Black Forest Labs 
 
 ## Requirements
 
-- Apple Silicon Mac (M1+)
+- Apple Silicon Mac (M1+) on macOS 14+
 - Python 3.12+
 - **16GB unified memory minimum; 24GB+ comfortable.** Weight size understates what a run actually needs: with only the text-to-image model resident, a 1024×1024 generation measured a 24GB process footprint against 8.6GB of weights. Most of the excess is MLX's Metal buffer cache — retained for reuse and reclaimable under pressure rather than leaked — but it is real memory while the session is warm. Generating *and* editing in one session keeps two independent weight copies resident, since they are separate cached models.
 
@@ -42,7 +42,7 @@ Streamlit application for generating and editing images using Black Forest Labs 
 
 Models download automatically on first use and are cached locally for reuse: **~8.6GB** for the 8-bit FLUX.2 Klein weights, plus ~2.7GB for Qwen3-VL if you turn prompt upsampling on. Text-to-image and editing share the same download.
 
-The app loads [`mlx-community/flux2-klein-4b-8bit`](https://huggingface.co/mlx-community/flux2-klein-4b-8bit) — the distilled FLUX.2 Klein 4B pre-quantized to 8-bit by mflux, which is roughly half the 16GB the bf16 original would pull. The 50-step base variant has no pre-quantized build published, so the app does not offer it.
+The app loads [`mlx-community/flux2-klein-4b-8bit`](https://huggingface.co/mlx-community/flux2-klein-4b-8bit) — the distilled FLUX.2 Klein 4B pre-quantized to 8-bit by mflux, which is roughly half the 16GB the bf16 original would pull. The 50-step base variant has no pre-quantized build under `mlx-community`, so the app does not offer it.
 
 ## Usage
 
