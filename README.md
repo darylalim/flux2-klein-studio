@@ -7,10 +7,9 @@
 Streamlit application for generating and editing images using Black Forest Labs [FLUX.2 Klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) on Apple Silicon with MLX, running the [8-bit quantized distilled 4B](https://huggingface.co/mlx-community/flux2-klein-4b-8bit) weights.
 
 <p align="center">
-  <img src="docs/screenshot-light.png" width="49%" alt="FLUX.2 Klein Studio — light theme">
-  <img src="docs/screenshot-dark.png" width="49%" alt="FLUX.2 Klein Studio — dark theme">
+  <img src="docs/screenshot-dark.png" width="100%" alt="FLUX.2 Klein Studio — the two-column studio in Streamlit's dark theme">
 </p>
-<p align="center"><sub>Light and dark themes (left / right)</sub></p>
+<p align="center"><sub>The studio in Streamlit's default dark theme — light is one click away in the app's appearance settings</sub></p>
 
 ## Features
 

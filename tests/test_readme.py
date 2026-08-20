@@ -1,6 +1,6 @@
 """Contract tests for the local image assets README.md embeds.
 
-The README leads with a light/dark screenshot pair (``docs/screenshot-*.png``)
+The README leads with a dark-theme screenshot (``docs/screenshot-dark.png``)
 and illustrates the editing example with its bundled inputs (``examples/*.webp``).
 These are *local* references: unlike the shields.io badges (remote URLs), they
 render on GitHub only when the file is committed at the referenced path. A
@@ -26,9 +26,9 @@ _README = _REPO_ROOT / "README.md"
 _MD_IMG_RE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 _HTML_IMG_RE = re.compile(r"""<img\b[^>]*?\bsrc=["']([^"']+)["']""", re.IGNORECASE)
 
-# The light/dark studio pair is the point of the screenshots change; lock both
-# by name so they can't silently vanish while other images keep the suite green.
-_HERO_SCREENSHOTS = ("docs/screenshot-light.png", "docs/screenshot-dark.png")
+# The studio hero is the point of the screenshots change; lock it by name so it
+# can't silently vanish while other images keep the suite green.
+_HERO_SCREENSHOTS = ("docs/screenshot-dark.png",)
 
 
 def _local_image_refs():
@@ -66,9 +66,9 @@ class TestReadmeImages:
         assert not missing, f"README references missing local images: {missing}"
 
     def test_hero_screenshots_referenced(self):
-        # The light/dark studio pair is the deliverable these tests reflect;
-        # assert each is embedded via a real image tag (not merely a substring
-        # of the prose), then that it is present on disk.
+        # The studio hero is the deliverable these tests reflect; assert it is
+        # embedded via a real image tag (not merely a substring of the prose),
+        # then that it is present on disk.
         refs = _local_image_refs()
         for asset in _HERO_SCREENSHOTS:
             assert asset in refs, f"README no longer embeds {asset}"

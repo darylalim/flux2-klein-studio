@@ -8,7 +8,7 @@ FLUX.2 Klein Studio is a single-file Streamlit application for generating and ed
 
 One model only — the distilled 4B pre-quantized to 8-bit ([mlx-community/flux2-klein-4b-8bit](https://huggingface.co/mlx-community/flux2-klein-4b-8bit)), ~8.6GB versus ~16GB for bf16. The 50-step base variant has no pre-quantized build under `mlx-community` (third-party mflux-format 8-bit builds do exist on the Hub) and is not offered. Optional vision-aware prompt upsampling via [Qwen3-VL-2B-Instruct](https://huggingface.co/mlx-community/Qwen3-VL-2B-Instruct-8bit) — the VLM can see uploaded images when enhancing editing prompts.
 
-`README.md` mirrors this file's Overview/Setup/CI/Releases/Hooks content for a public audience (plus a Usage section and a light/dark screenshot hero) — keep the two in sync.
+`README.md` mirrors this file's Overview/Setup/CI/Releases/Hooks content for a public audience (plus a Usage section and a dark-theme screenshot hero) — keep the two in sync.
 
 ## Setup
 
@@ -58,7 +58,7 @@ All four green, plus `README.md` re-synced if mirrored content moved. The `Stop`
 | `streamlit_app.py` | the entire application |
 | `tests/` | the suite (see Testing conventions) |
 | `examples/` | bundled edit-example images (`woman1.webp`, `cat_window.webp`, `bird.webp`) |
-| `docs/` | README screenshots |
+| `docs/` | the README screenshot |
 | `.claude/` | repo-shared Claude Code hooks |
 | `.github/workflows/` | CI quality gates + release |
 | `.streamlit/config.toml` | Streamlit config — deliberately carries no `[theme]` |
@@ -179,5 +179,5 @@ Cut by bumping `version` in `pyproject.toml` and pushing to `main` — nothing e
 - **All models share MLX unified memory, but not with each other**: `_get_model()` and `_get_edit_model()` are separate `@st.cache_resource` entries holding separate weight copies (they do share the single HF download), and Qwen3-VL-2B-8bit is a third. **Weight size badly understates the real footprint** — with only the txt2img model loaded, `phys_footprint` measured 24 GB after one 1024×1024 run against 8.6GB of weights. The excess is MLX's Metal buffer cache plus activations — reclaimable rather than leaked, with `mx.clear_cache()` as the lever. Budget from measurement, not from safetensors sizes.
 - **Streamlit widget state cannot be modified after instantiation.** Use `on_click` callbacks to set `st.session_state` keys for widgets, not direct assignment after the widget is created. Keyed expanders are the exception — `st.expander(key=...)` registers with writes allowed, so callbacks may set `st.session_state.input_expander` directly.
 - **The working tree carries an untracked `.env`, but the app reads no environment variables** and needs no HF token — don't wire configuration through it.
-- **`docs/screenshot-{light,dark}.png` are the README hero and are captured by hand** (run the app wide, one shot per appearance mode). `tests/test_readme.py` locks only that the README's local images exist and are git-tracked, never that they match the UI — so any change to the controls column means re-shooting both. **They are stale today** on two counts: they still show a "Mode: Distilled / Base" toggle the app no longer has, and they were shot against the retired custom purple palette rather than Streamlit's default themes.
+- **`docs/screenshot-dark.png` is the README hero** — one shot, dark only; there is no light counterpart. `tests/test_readme.py` locks that the README's local images exist and are git-tracked, never that they match the UI, so any change to the controls column means re-shooting. Current as of 2026-08-20 (Streamlit default dark, no Mode toggle). The recipe, because two obvious routes both fail: serve the app with `--theme.base dark --client.toolbarMode minimal` (forces dark deterministically and hides the Deploy toolbar), then drive headless Chrome over CDP on `--remote-debugging-port`, `Emulation.setDeviceMetricsOverride` at 1440×880 / `deviceScaleFactor: 2`, polling `document.body.innerText` until the app renders before `Page.captureScreenshot`. Chrome's one-shot `--screenshot` flag fires at the load event and catches Streamlit's skeleton placeholder instead, and macOS `screencapture` can only reach 1× on a non-Retina display — the existing 2880×1760 asset is 2×.
 - **Commit style:** Conventional Commits (including the local `harden(...)` type, and `feat!:` for breaking changes) with a body that states the evidence, on a `<type>/<slug>` topic branch merged with `--no-ff`. There is no pre-commit config — the `.claude/` hooks are the only local automation.
