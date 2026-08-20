@@ -159,11 +159,19 @@ class TestThemeConfig:
     The app ships Streamlit's stock light and dark themes, so the palette and
     its contrast are Streamlit's contract, not this repo's. What needs locking
     is the *absence*: any [theme] key makes this a custom theme, and a custom
-    theme without both [theme.light] and [theme.dark] locks the app to a single
-    mode -- so even a lone `font` here would cost the appearance switcher.
+    theme with neither [theme.light] nor [theme.dark] populated collapses to a
+    single mode -- the frontend branches on `light || dark`, so one populated
+    variant keeps the switcher while a lone `font` populates neither and costs
+    it. Scope: this reads the committed file, so it cannot see a theme injected
+    at runtime (`--theme.base dark`, STREAMLIT_THEME_*, ~/.streamlit) -- which is
+    what the screenshot recipe in CLAUDE.md deliberately does.
     """
 
     def test_no_custom_theme_is_declared(self):
+        assert _CONFIG_PATH.is_file(), (
+            f"{_CONFIG_PATH.name} is gone, and with it the only record of why "
+            "the theme is empty -- keep the file even though it sets nothing"
+        )
         with _CONFIG_PATH.open("rb") as fh:
             config = tomllib.load(fh)
         assert "theme" not in config, (

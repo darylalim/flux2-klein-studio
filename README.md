@@ -9,7 +9,7 @@ Streamlit application for generating and editing images using Black Forest Labs 
 <p align="center">
   <img src="docs/screenshot-dark.png" width="100%" alt="FLUX.2 Klein Studio — the two-column studio in Streamlit's dark theme">
 </p>
-<p align="center"><sub>The studio in Streamlit's default dark theme — light is one click away in the app's appearance settings</sub></p>
+<p align="center"><sub>The two-column studio in Streamlit's default dark theme — the stock light theme ships too</sub></p>
 
 ## Features
 
