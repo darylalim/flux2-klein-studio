@@ -32,10 +32,15 @@ def _make_mock_model():
 
 
 class _MockGenerationResult:
-    """Mock mlx-vlm GenerationResult with a .text attribute."""
+    """Mock mlx-vlm GenerationResult with .text and .finish_reason.
 
-    def __init__(self, text="enhanced prompt"):
+    finish_reason is real: mlx-vlm sets "stop" on a natural end and "length"
+    when max_tokens cut generation off, and upsample_prompt branches on it.
+    """
+
+    def __init__(self, text="enhanced prompt", finish_reason="stop"):
         self.text = text
+        self.finish_reason = finish_reason
 
 
 def _passthrough_cache_resource(func=None, **_kwargs):
@@ -137,7 +142,7 @@ class TestConstants:
     def test_vlm_model_id(self):
         import streamlit_app
 
-        assert streamlit_app.VLM_MODEL_ID == "mlx-community/SmolVLM-500M-Instruct-bf16"
+        assert streamlit_app.VLM_MODEL_ID == "mlx-community/Qwen3-VL-2B-Instruct-8bit"
 
     def test_model_repo_is_the_8bit_build(self):
         """The app is pinned to the pre-quantized 8-bit distilled repo.
@@ -657,10 +662,8 @@ class TestVLMInit:
             mock_load.return_value = (mock_vlm_model, mock_vlm_processor)
             mock_lc.return_value = mock_vlm_config
             streamlit_app._get_vlm()
-            mock_load.assert_called_once_with(
-                "mlx-community/SmolVLM-500M-Instruct-bf16"
-            )
-            mock_lc.assert_called_once_with("mlx-community/SmolVLM-500M-Instruct-bf16")
+            mock_load.assert_called_once_with("mlx-community/Qwen3-VL-2B-Instruct-8bit")
+            mock_lc.assert_called_once_with("mlx-community/Qwen3-VL-2B-Instruct-8bit")
 
     def test_vlm_returns_triple(self):
         mock_model = _make_mock_model()
@@ -685,8 +688,9 @@ EXPECTED_SYSTEM_PROMPT = (
     "Guidelines:\n"
     "- Add concrete visual specifics: textures, materials, lighting, "
     "shadows, and spatial relationships.\n"
-    "- Put ALL text that should appear in the image in quotation marks "
-    "(signs, labels, screens, etc.) - without quotes, the model generates "
+    "- Only include rendered text the user explicitly asked for; never "
+    "invent signs, labels, captions, or titles. When the user does ask for "
+    "text, put it in quotation marks - without quotes, the model generates "
     "gibberish.\n\n"
     "Output only the revised prompt and nothing else."
 )
@@ -702,10 +706,38 @@ EXPECTED_SYSTEM_PROMPT_WITH_IMAGES = (
     "composition)\n"
     "- Turn negatives into positives "
     '("don\'t change X" becomes "keep X")\n'
-    '- Make abstractions concrete ("futuristic" becomes '
-    '"glowing cyan neon, metallic panels")\n\n'
+    "- Replace abstract adjectives with the specific materials, colours "
+    "and lighting they imply\n\n"
     "Output only the final instruction in plain text and nothing else."
 )
+
+
+class TestVlmImages:
+    def test_returns_none_without_images(self):
+        import streamlit_app
+
+        assert streamlit_app._vlm_images(None) is None
+        assert streamlit_app._vlm_images([]) is None
+
+    def test_downscales_to_the_cap(self):
+        import streamlit_app
+
+        out = streamlit_app._vlm_images([Image.new("RGB", (4032, 3024))])
+        assert max(out[0].size) == streamlit_app.VLM_MAX_IMAGE_SIZE
+
+    def test_leaves_small_images_alone(self):
+        import streamlit_app
+
+        out = streamlit_app._vlm_images([Image.new("RGB", (512, 768))])
+        assert out[0].size == (512, 768)
+
+    def test_does_not_mutate_the_originals(self):
+        """infer() passes the same list to mflux; thumbnail() resizes in place."""
+        import streamlit_app
+
+        original = Image.new("RGB", (4032, 3024))
+        streamlit_app._vlm_images([original])
+        assert original.size == (4032, 3024)
 
 
 class TestUpsamplePrompt:
@@ -780,7 +812,13 @@ class TestUpsamplePrompt:
             mock_gen.return_value = _MockGenerationResult("enhanced prompt")
             streamlit_app.upsample_prompt("edit", image_list=images)
             call_kwargs = mock_gen.call_args[1]
-            assert call_kwargs["image"] is images
+            passed = call_kwargs["image"]
+            # Downscaled copies, never the originals: infer() still
+            # hands the full-resolution images to mflux.
+            assert passed is not images
+            assert len(passed) == len(images)
+            assert all(a is not b for a, b in zip(passed, images, strict=True))
+            assert all(max(i.size) <= streamlit_app.VLM_MAX_IMAGE_SIZE for i in passed)
 
     def test_no_images_passed_for_text_only(self):
         mock_model = _make_mock_model()
@@ -818,9 +856,18 @@ class TestUpsamplePrompt:
             mock_gen.return_value = _MockGenerationResult("enhanced prompt")
             streamlit_app.upsample_prompt("a cat")
             call_kwargs = mock_gen.call_args[1]
-            assert call_kwargs["max_tokens"] == 150
+            assert call_kwargs["max_tokens"] == 256
             assert call_kwargs["temperature"] == 0.7
-            assert call_kwargs["top_p"] == 0.9
+            # Qwen3-VL's shipped generation_config values, not SmolVLM's.
+            assert call_kwargs["top_p"] == 0.8
+            assert call_kwargs["top_k"] == 20
+            assert call_kwargs["repetition_penalty"] == 1.05
+            # Explicit: mlx-vlm's default window is 20 tokens, too short for
+            # a clause-length loop.
+            assert call_kwargs["repetition_context_size"] == 64
+            # Grounding tokens are not stop ids and would decode into the
+            # prompt handed to FLUX.
+            assert call_kwargs["skip_special_tokens"] is True
 
     def test_extracts_and_strips_output(self):
         mock_model = _make_mock_model()
@@ -840,7 +887,8 @@ class TestUpsamplePrompt:
             result = streamlit_app.upsample_prompt("a cat")
             assert result == "A majestic feline"
 
-    def test_strips_end_of_utterance_token(self):
+    def test_truncated_generation_returns_original(self):
+        """A capped run is a mid-sentence fragment, not a usable FLUX prompt."""
         mock_model = _make_mock_model()
         mock_vlm = _make_mock_vlm()
         streamlit_app, _, _ = _reload_app(mock_model, mock_vlm=mock_vlm)
@@ -855,12 +903,13 @@ class TestUpsamplePrompt:
             mock_lc.return_value = mock_vlm_config
             mock_chat.return_value = "formatted prompt"
             mock_gen.return_value = _MockGenerationResult(
-                "A majestic feline<end_of_utterance>"
+                "A majestic feline sitting on a windowsill in the",
+                finish_reason="length",
             )
-            result = streamlit_app.upsample_prompt("a cat")
-            assert result == "A majestic feline"
+            assert streamlit_app.upsample_prompt("a cat") == "a cat"
 
-    def test_strips_end_of_utterance_token_mid_text(self):
+    def test_natural_stop_is_kept(self):
+        """The guard must not reject a normal completion."""
         mock_model = _make_mock_model()
         mock_vlm = _make_mock_vlm()
         streamlit_app, _, _ = _reload_app(mock_model, mock_vlm=mock_vlm)
@@ -875,10 +924,9 @@ class TestUpsamplePrompt:
             mock_lc.return_value = mock_vlm_config
             mock_chat.return_value = "formatted prompt"
             mock_gen.return_value = _MockGenerationResult(
-                "A majestic<end_of_utterance> feline"
+                "A majestic feline", finish_reason="stop"
             )
-            result = streamlit_app.upsample_prompt("a cat")
-            assert result == "A majestic feline"
+            assert streamlit_app.upsample_prompt("a cat") == "A majestic feline"
 
     def test_empty_output_returns_original(self):
         mock_model = _make_mock_model()
@@ -1020,7 +1068,13 @@ class TestResolvePrompt:
             )
             assert was_enhanced is True
             call_kwargs = mock_gen.call_args[1]
-            assert call_kwargs["image"] is images
+            passed = call_kwargs["image"]
+            # Downscaled copies, never the originals: infer() still
+            # hands the full-resolution images to mflux.
+            assert passed is not images
+            assert len(passed) == len(images)
+            assert all(a is not b for a, b in zip(passed, images, strict=True))
+            assert all(max(i.size) <= streamlit_app.VLM_MAX_IMAGE_SIZE for i in passed)
 
     def test_falls_back_on_vlm_error(self):
         mock_model = _make_mock_model()

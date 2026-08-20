@@ -4,14 +4,17 @@ Every other test in this suite patches ``Flux2Klein``/``Flux2KleinEdit`` with a
 MagicMock, so an mflux API break sails through the whole green suite. These are
 the only tests that exercise the real stack end to end, which makes them the
 pre-release gate — and also why they are deselected by default (see
-``[tool.pytest.ini_options]`` in ``pyproject.toml``): they need ~8.6GB of weights
-on disk and Apple Silicon, neither of which CI has.
+``[tool.pytest.ini_options]`` in ``pyproject.toml``): they need ~11.3GB of weights
+on disk (8.6GB FLUX.2 Klein + 2.7GB Qwen3-VL) and Apple Silicon, neither of
+which CI has.
 
     uv run pytest -m smoke            # all of them
     uv run pytest -m smoke -k text    # just text-to-image
 
 Weights come from the HF cache; the first run downloads them.
 """
+
+import re
 
 import pytest
 from PIL import Image
@@ -95,8 +98,35 @@ def test_progress_callback_fires_and_is_deregistered(app):
 
 
 def test_prompt_upsampling_returns_usable_text(app):
-    """SmolVLM is the third real dependency and equally mocked elsewhere."""
+    """Qwen3-VL is the third real dependency and equally mocked elsewhere."""
     enhanced = app.upsample_prompt("a cat")
     assert isinstance(enhanced, str)
     assert enhanced.strip()
-    assert "<end_of_utterance>" not in enhanced  # stripped, per mlx-vlm's output
+    # <|im_end|> is a stop id consumed before detokenization, so asserting on
+    # it can never fail. The tokens that *can* leak are Qwen3-VL's grounding
+    # markers (<|box_start|>, <|object_ref_start|>, ...), which are ordinary
+    # special tokens -- hence skip_special_tokens=True in upsample_prompt.
+    assert not re.search(r"<\|[a-z_]+\|>", enhanced), enhanced
+
+
+def test_prompt_upsampling_sees_multiple_images(app):
+    """The multi-image VLM path, unmocked.
+
+    Every other VLM test patches ``vlm_generate``, so nothing else proves that
+    Qwen3-VL's processor accepts the list of PIL Images the UI actually builds
+    (mlx-vlm annotates ``image`` as ``str | list[str] | None``), or that
+    multi-image prefill succeeds at all. Same reasoning as
+    ``test_edit_accepts_the_pil_images_the_ui_builds`` on the mflux side.
+    """
+    request, paths = app.EDIT_EXAMPLES[0]
+    images = [Image.open(p) for p in paths]
+    sizes = [i.size for i in images]
+
+    enhanced = app.upsample_prompt(request, image_list=images)
+
+    assert isinstance(enhanced, str)
+    assert enhanced.strip()
+    # Grounding markers must not reach the FLUX prompt.
+    assert not re.search(r"<\|[a-z_]+\|>", enhanced), enhanced
+    # _vlm_images downscales copies; infer() still needs the originals.
+    assert [i.size for i in images] == sizes

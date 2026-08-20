@@ -21,7 +21,20 @@ MAX_IMAGE_SIZE = 1024
 # between states (the result image then sizes to its own content).
 OUTPUT_FRAME_HEIGHT = 420
 
-VLM_MODEL_ID = "mlx-community/SmolVLM-500M-Instruct-bf16"
+VLM_MODEL_ID = "mlx-community/Qwen3-VL-2B-Instruct-8bit"
+
+# Longest edge handed to the VLM. Qwen3-VL's processor does not cap input
+# resolution (preprocessor_config has max_pixels=None and
+# size.longest_edge=16777216), unlike SmolVLM's 512px tiling. Measured: a
+# 4032x3024 phone photo costs 11987 prompt tokens and 50s of prefill
+# against 575 tokens and 0.7s at 768px, with identical subject coverage
+# across 768/1024/full-res on the bundled 3-image example.
+VLM_MAX_IMAGE_SIZE = 768
+
+# Generation cap. Named so the guard below cannot drift from the kwarg: a
+# run that stops because it hit the cap is a mid-sentence fragment, and
+# that is a worse FLUX prompt than the user's own words.
+VLM_MAX_TOKENS = 256
 
 # The app ships exactly one model: the distilled FLUX.2 Klein 4B, pre-quantized
 # to 8-bit by mflux itself (its safetensors carry mflux's own
@@ -76,7 +89,7 @@ def _get_edit_model():
     )
 
 
-@st.cache_resource(show_spinner="Loading SmolVLM prompt enhancer…")
+@st.cache_resource(show_spinner="Loading Qwen3-VL prompt enhancer…")
 def _get_vlm():
     model, processor = load_vlm(VLM_MODEL_ID)
     config = load_config(VLM_MODEL_ID)
@@ -91,8 +104,9 @@ UPSAMPLE_PROMPT_TEXT_ONLY = (
     "Guidelines:\n"
     "- Add concrete visual specifics: textures, materials, lighting, "
     "shadows, and spatial relationships.\n"
-    "- Put ALL text that should appear in the image in quotation marks "
-    "(signs, labels, screens, etc.) - without quotes, the model generates "
+    "- Only include rendered text the user explicitly asked for; never "
+    "invent signs, labels, captions, or titles. When the user does ask for "
+    "text, put it in quotation marks - without quotes, the model generates "
     "gibberish.\n\n"
     "Output only the revised prompt and nothing else."
 )
@@ -108,10 +122,26 @@ UPSAMPLE_PROMPT_WITH_IMAGES = (
     "composition)\n"
     "- Turn negatives into positives "
     '("don\'t change X" becomes "keep X")\n'
-    '- Make abstractions concrete ("futuristic" becomes '
-    '"glowing cyan neon, metallic panels")\n\n'
+    "- Replace abstract adjectives with the specific materials, colours "
+    "and lighting they imply\n\n"
     "Output only the final instruction in plain text and nothing else."
 )
+
+
+def _vlm_images(image_list):
+    """Downscaled copies of the inputs for the VLM.
+
+    Copies, not the originals: `infer()` still passes the full-resolution
+    images to mflux, and PIL's thumbnail() resizes in place.
+    """
+    if not image_list:
+        return None
+    resized = []
+    for image in image_list:
+        downscaled = image.copy()
+        downscaled.thumbnail((VLM_MAX_IMAGE_SIZE, VLM_MAX_IMAGE_SIZE))
+        resized.append(downscaled)
+    return resized
 
 
 def upsample_prompt(prompt, image_list: list | None = None):
@@ -124,7 +154,7 @@ def upsample_prompt(prompt, image_list: list | None = None):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ]
-        # apply_chat_template returns a str at runtime for SmolVLM, though the
+        # apply_chat_template returns a str at runtime for Qwen3-VL, though the
         # stub types it as a broader union.
         formatted_prompt = cast(
             str,
@@ -142,12 +172,29 @@ def upsample_prompt(prompt, image_list: list | None = None):
             # mlx_vlm types `image` as str | list[str] | None; it also accepts
             # PIL Images at runtime, which ty cannot see here because
             # image_list is an untyped list.
-            image=image_list if image_list else None,
-            max_tokens=150,
+            image=_vlm_images(image_list),
+            max_tokens=VLM_MAX_TOKENS,
+            # Qwen3-VL's own generation_config.json asks for top_p 0.8 /
+            # top_k 20; mlx-vlm leaves top_k off unless told otherwise, which
+            # widens the tail well past what the model was tuned for.
             temperature=0.7,
-            top_p=0.9,
+            top_p=0.8,
+            top_k=20,
+            # 1.05 cleared the multi-image repetition loop in every measured
+            # case. The window is explicit because mlx-vlm defaults it to 20
+            # tokens, too short to see a clause-length cycle.
+            repetition_penalty=1.05,
+            repetition_context_size=64,
+            # Qwen3-VL is grounding-trained and its <|box_start|>-style tokens
+            # are not stop ids, so without this they decode verbatim into the
+            # prompt handed to FLUX.
+            skip_special_tokens=True,
         )
-        enhanced = result.text.replace("<end_of_utterance>", "").strip()
+        # mlx-vlm reports "length" when the cap cut generation off rather
+        # than the model stopping on its own; that text is a fragment.
+        if result.finish_reason == "length":
+            return prompt
+        enhanced = result.text.strip()
         return enhanced or prompt
     except Exception:
         st.warning(
