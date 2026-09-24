@@ -11,6 +11,7 @@ from mlx_vlm import load as load_vlm
 from mlx_vlm.prompt_utils import apply_chat_template
 from mlx_vlm.utils import load_config
 from PIL import Image
+from streamlit.runtime.media_file_storage import MediaFileStorageError
 
 APP_TITLE = "FLUX.2 Klein Studio"
 
@@ -44,10 +45,15 @@ VLM_MAX_TOKENS = 256
 # mode switch.
 MODEL_REPO = "mlx-community/flux2-klein-4b-8bit"
 
-# The distilled variant is guidance-free and converges in 4 steps. These seed the
-# steps/guidance sliders, which stay adjustable.
+# The distilled variant converges in 4 steps; this seeds the steps slider.
 DEFAULT_STEPS = 4
-DEFAULT_GUIDANCE = 1.0
+
+# It is also guidance-free, so guidance is pinned rather than exposed. Above
+# 1.0 mflux runs classifier-free guidance against a blank negative prompt,
+# using the value as the CFG scale -- a second transformer pass per step, and
+# output pushed off what the model was distilled for. Passed explicitly
+# because mflux's own defaults disagree (generate_image: 1.0, Config: 4.0).
+GUIDANCE = 1.0
 
 EXAMPLE_PROMPTS = [
     "Create a vase on a table in living room, the color of the vase is a gradient of color, starting with #02eb3c color and finishing with #edfa3c. The flowers inside the vase have the color #ff0088",
@@ -170,8 +176,10 @@ def upsample_prompt(prompt, image_list: list | None = None):
             processor,
             formatted_prompt,
             # mlx_vlm types `image` as str | list[str] | None; it also accepts
-            # PIL Images at runtime, which ty cannot see here because
-            # image_list is an untyped list.
+            # PIL Images at runtime. ty cannot see the mismatch: _vlm_images
+            # has no return annotation, so its result is Unknown. ty doesn't
+            # check the keyword names below either, so a typo is dropped
+            # silently.
             image=_vlm_images(image_list),
             max_tokens=VLM_MAX_TOKENS,
             # Qwen3-VL's own generation_config.json asks for top_p 0.8 /
@@ -187,16 +195,19 @@ def upsample_prompt(prompt, image_list: list | None = None):
             # clause-length cycle.
             repetition_penalty=1.05,
             repetition_context_size=64,
-            # Qwen3-VL is grounding-trained and its <|box_start|>-style tokens
-            # are not stop ids, so without this they decode verbatim into the
-            # prompt handed to FLUX.
-            skip_special_tokens=True,
         )
         # mlx-vlm reports "length" when the cap cut generation off rather
         # than the model stopping on its own; that text is a fragment.
         if result.finish_reason == "length":
             return prompt
-        enhanced = result.text.strip()
+        # Decode the ids rather than read result.text. Qwen3-VL is
+        # grounding-trained, and mlx-vlm's skip_special_tokens skips only
+        # tokenizer.all_special_ids -- just <|im_end|> and <|endoftext|> here
+        # -- so <|box_start|>-style markers would reach FLUX verbatim. The
+        # tokenizer's own skip covers all 14 of its special tokens.
+        enhanced = processor.tokenizer.decode(
+            result.token_ids, skip_special_tokens=True
+        ).strip()
         return enhanced or prompt
     except Exception:
         st.warning(
@@ -276,13 +287,10 @@ def infer(
     randomize_seed=False,
     width=1024,
     height=1024,
-    guidance_scale=None,
     num_inference_steps=None,
     image_list=None,
     progress_callback=None,
 ):
-    if guidance_scale is None:
-        guidance_scale = DEFAULT_GUIDANCE
     if num_inference_steps is None:
         num_inference_steps = DEFAULT_STEPS
 
@@ -304,7 +312,7 @@ def infer(
                 num_inference_steps=num_inference_steps,
                 width=width,
                 height=height,
-                guidance=guidance_scale,
+                guidance=GUIDANCE,
                 image_paths=image_list,
             )
         else:
@@ -314,7 +322,7 @@ def infer(
                 num_inference_steps=num_inference_steps,
                 width=width,
                 height=height,
-                guidance=guidance_scale,
+                guidance=GUIDANCE,
             )
     finally:
         if reporter is not None:
@@ -389,8 +397,11 @@ if __name__ == "__main__":
             if not uploaded_files and _has_example_images:
                 st.caption("Loaded example images:")
                 # Unreadable paths would crash this preview before the load guard
-                # below runs; that guard warns and clears them.
-                with contextlib.suppress(OSError):
+                # below runs; that guard warns and clears them. A file that isn't
+                # an image raises UnidentifiedImageError (an OSError); one that
+                # can't be opened at all raises MediaFileStorageError from
+                # Streamlit's media storage, a plain Exception subclass.
+                with contextlib.suppress(OSError, MediaFileStorageError):
                     st.image(st.session_state.example_images, width=80)
                 st.button("Clear example images", on_click=_clear_example_images)
 
@@ -449,13 +460,12 @@ if __name__ == "__main__":
         st.session_state.setdefault("width_slider", 1024)
         st.session_state.setdefault("height_slider", 1024)
         st.session_state.setdefault("steps_slider", DEFAULT_STEPS)
-        st.session_state.setdefault("guidance_scale_slider", DEFAULT_GUIDANCE)
 
-        # The four sliders below are instantiated on every run — two invariants
+        # The three sliders below are instantiated on every run — two invariants
         # to preserve:
-        #  1. Keys seeded above (width/height on image change, plus the
-        #     steps/guidance defaults) are written before this line, so they land
-        #     before the widgets exist. Keep those blocks above this expander.
+        #  1. Keys seeded above (width/height on image change, plus the steps
+        #     default) are written before this line, so they land before the
+        #     widgets exist. Keep those blocks above this expander.
         #  2. Do NOT gate this body with on_change="rerun" + `.open` to skip it
         #     when collapsed: the slider return values feed infer() below, so they
         #     must be assigned every run — a collapsed, un-run body leaves them
@@ -496,24 +506,13 @@ if __name__ == "__main__":
                     key="height_slider",
                 )
 
-            col_steps, col_guidance = st.columns(2)
-            with col_steps:
-                num_inference_steps = st.slider(
-                    "Number of inference steps",
-                    min_value=1,
-                    max_value=100,
-                    step=1,
-                    key="steps_slider",
-                )
-            with col_guidance:
-                guidance_scale = st.slider(
-                    "Guidance scale",
-                    min_value=0.0,
-                    max_value=10.0,
-                    step=0.1,
-                    format="%g",
-                    key="guidance_scale_slider",
-                )
+            num_inference_steps = st.slider(
+                "Number of inference steps",
+                min_value=1,
+                max_value=100,
+                step=1,
+                key="steps_slider",
+            )
 
         st.markdown("**Examples**")
         _ex_cols = st.columns(2)
@@ -603,7 +602,6 @@ if __name__ == "__main__":
                         randomize_seed,
                         width,
                         height,
-                        guidance_scale,
                         num_inference_steps,
                         image_list=image_list,
                         progress_callback=_update_progress,

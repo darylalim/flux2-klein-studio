@@ -32,15 +32,40 @@ def _make_mock_model():
 
 
 class _MockGenerationResult:
-    """Mock mlx-vlm GenerationResult with .text and .finish_reason.
+    """Mock mlx-vlm GenerationResult with .text, .finish_reason and .token_ids.
 
     finish_reason is real: mlx-vlm sets "stop" on a natural end and "length"
     when max_tokens cut generation off, and upsample_prompt branches on it.
+    token_ids holds _FakeTokenizer pieces rather than ints; by default the
+    whole text is one piece, followed on a natural stop by the <|im_end|>
+    id that the real list also ends with.
     """
 
-    def __init__(self, text="enhanced prompt", finish_reason="stop"):
+    def __init__(self, text="enhanced prompt", finish_reason="stop", token_ids=None):
         self.text = text
         self.finish_reason = finish_reason
+        if token_ids is None:
+            token_ids = [text, "<|im_end|>"] if finish_reason == "stop" else [text]
+        self.token_ids = token_ids
+
+
+class _FakeTokenizer:
+    """Stands in for Qwen3-VL's HF tokenizer, where each "id" is a text piece.
+
+    decode(skip_special_tokens=True) drops every added special token, which
+    is the real tokenizer's contract (tests/test_smoke.py checks it against
+    the real one) and the reason upsample_prompt decodes ids itself.
+    """
+
+    SPECIAL = frozenset(
+        {"<|im_end|>", "<|endoftext|>", "<|box_start|>", "<|box_end|>"}
+        | {"<|object_ref_start|>", "<|object_ref_end|>"}
+    )
+
+    def decode(self, token_ids, skip_special_tokens=False):
+        return "".join(
+            t for t in token_ids if not (skip_special_tokens and t in self.SPECIAL)
+        )
 
 
 def _passthrough_cache_resource(func=None, **_kwargs):
@@ -58,6 +83,7 @@ def _passthrough_cache_resource(func=None, **_kwargs):
 def _make_mock_vlm():
     """Create a mock VLM (model, processor, config) triple."""
     mock_processor = MagicMock()
+    mock_processor.tokenizer = _FakeTokenizer()
     mock_model = MagicMock()
     mock_config = MagicMock()
     return mock_model, mock_processor, mock_config
@@ -134,7 +160,9 @@ class TestConstants:
         import streamlit_app
 
         assert streamlit_app.DEFAULT_STEPS == 4
-        assert streamlit_app.DEFAULT_GUIDANCE == 1.0
+        # Above 1.0 mflux runs CFG against a blank negative -- a second
+        # transformer pass per step the distilled model doesn't need.
+        assert streamlit_app.GUIDANCE == 1.0
 
     def test_no_mode_tables_remain(self):
         """The base variant was dropped; no mode plumbing should linger."""
@@ -248,7 +276,6 @@ class TestInfer:
                 seed=123,
                 width=768,
                 height=512,
-                guidance_scale=3.0,
                 num_inference_steps=20,
             )
             mock_model.generate_image.assert_called_once_with(
@@ -257,7 +284,7 @@ class TestInfer:
                 num_inference_steps=20,
                 width=768,
                 height=512,
-                guidance=3.0,
+                guidance=streamlit_app.GUIDANCE,
             )
 
     def test_fixed_seed(self):
@@ -314,28 +341,10 @@ class TestInfer:
                 num_inference_steps=streamlit_app.DEFAULT_STEPS,
                 width=1024,
                 height=1024,
-                guidance=streamlit_app.DEFAULT_GUIDANCE,
+                guidance=streamlit_app.GUIDANCE,
             )
 
-    def test_explicit_params_override_defaults(self):
-        mock_model = _make_mock_model()
-        streamlit_app, _, _ = _reload_app(mock_model)
-        with patch("streamlit_app.Flux2Klein", return_value=mock_model):
-            streamlit_app.infer(
-                "a cat",
-                guidance_scale=2.0,
-                num_inference_steps=10,
-            )
-            mock_model.generate_image.assert_called_once_with(
-                seed=42,
-                prompt="a cat",
-                num_inference_steps=10,
-                width=1024,
-                height=1024,
-                guidance=2.0,
-            )
-
-    def test_partial_override_steps_only(self):
+    def test_explicit_steps_override_default(self):
         mock_model = _make_mock_model()
         streamlit_app, _, _ = _reload_app(mock_model)
         with patch("streamlit_app.Flux2Klein", return_value=mock_model):
@@ -345,7 +354,7 @@ class TestInfer:
             )
             call_kwargs = mock_model.generate_image.call_args[1]
             assert call_kwargs["num_inference_steps"] == 10
-            assert call_kwargs["guidance"] == streamlit_app.DEFAULT_GUIDANCE
+            assert call_kwargs["guidance"] == streamlit_app.GUIDANCE
 
     def test_infer_takes_no_mode_argument(self):
         """The mode parameter is gone; a stale caller must fail loudly."""
@@ -354,6 +363,17 @@ class TestInfer:
         import streamlit_app
 
         assert "mode" not in inspect.signature(streamlit_app.infer).parameters
+
+    def test_infer_takes_no_guidance_argument(self):
+        """Guidance is pinned, not a parameter; a stale caller must fail loudly
+        rather than have its value silently ignored."""
+        import inspect
+
+        import streamlit_app
+
+        params = inspect.signature(streamlit_app.infer).parameters
+        assert "guidance_scale" not in params
+        assert "guidance" not in params
 
     def test_image_list_uses_edit_model(self):
         mock_model = _make_mock_model()
@@ -367,6 +387,8 @@ class TestInfer:
             streamlit_app.infer("edit this", image_list=images)
             call_kwargs = mock_edit_model.generate_image.call_args[1]
             assert call_kwargs["image_paths"] is images
+            # The edit pipeline runs the same CFG-above-1.0 branch.
+            assert call_kwargs["guidance"] == streamlit_app.GUIDANCE
             mock_model.generate_image.assert_not_called()
 
     def test_no_images_uses_txt2img_model(self):
@@ -811,9 +833,38 @@ class TestUpsamplePrompt:
             # Explicit: mlx-vlm's default window is 20 tokens, too short for
             # a clause-length loop.
             assert call_kwargs["repetition_context_size"] == 64
-            # Grounding tokens are not stop ids and would decode into the
-            # prompt handed to FLUX.
-            assert call_kwargs["skip_special_tokens"] is True
+
+    def test_grounding_markers_are_stripped(self):
+        """mlx-vlm's skip set is only all_special_ids (<|im_end|>/<|endoftext|>
+        for Qwen3-VL), so result.text keeps grounding markers; upsample_prompt
+        must decode token_ids with the tokenizer's full skip instead."""
+        mock_model = _make_mock_model()
+        mock_vlm = _make_mock_vlm()
+        streamlit_app, _, _ = _reload_app(mock_model, mock_vlm=mock_vlm)
+        pieces = [
+            "A ",
+            "<|object_ref_start|>",
+            "cat",
+            "<|object_ref_end|>",
+            " on a sofa",
+            "<|im_end|>",
+        ]
+        with (
+            patch("streamlit_app.load_vlm") as mock_load,
+            patch("streamlit_app.load_config") as mock_lc,
+            patch("streamlit_app.apply_chat_template") as mock_chat,
+            patch("streamlit_app.vlm_generate") as mock_gen,
+        ):
+            mock_vlm_model, mock_vlm_processor, mock_vlm_config = mock_vlm
+            mock_load.return_value = (mock_vlm_model, mock_vlm_processor)
+            mock_lc.return_value = mock_vlm_config
+            mock_chat.return_value = "formatted prompt"
+            mock_gen.return_value = _MockGenerationResult(
+                # What mlx-vlm's own detokenizer yields for these ids.
+                "A <|object_ref_start|>cat<|object_ref_end|> on a sofa",
+                token_ids=pieces,
+            )
+            assert streamlit_app.upsample_prompt("a cat") == "A cat on a sofa"
 
     def test_extracts_and_strips_output(self):
         mock_model = _make_mock_model()
@@ -1187,18 +1238,14 @@ class TestStreamlitApp:
             assert at.text_input(key="prompt_input").placeholder == "Enter your prompt"
 
     def test_sliders_seed_the_distilled_defaults(self):
-        # Nothing writes these keys any more (the mode block used to), so the
-        # setdefault seeding is the only thing standing between the sliders and
-        # their min_value — 1 step at guidance 0.0 would render noise.
+        # Nothing writes this key any more (the mode block used to), so the
+        # setdefault seeding is the only thing standing between the slider and
+        # its min_value — 1 step would render noise.
         import streamlit_app
 
         with _app_test() as app:
             at = app.run(timeout=10)
             assert at.slider(key="steps_slider").value == streamlit_app.DEFAULT_STEPS
-            assert (
-                at.slider(key="guidance_scale_slider").value
-                == streamlit_app.DEFAULT_GUIDANCE
-            )
 
     def test_steps_slider_still_allows_long_runs(self):
         # Losing the Base preset must not lose the ability to run many steps.
@@ -1218,17 +1265,12 @@ class TestStreamlitApp:
             )
 
     def test_advanced_sliders_render_while_collapsed(self):
-        # The Advanced settings expander is collapsed by default, yet its four
+        # The Advanced settings expander is collapsed by default, yet its three
         # sliders must still instantiate every run: their values feed infer(),
         # so gating the expander body on it being open would leave them unset.
         with _app_test() as app:
             at = app.run(timeout=10)
-            for key in (
-                "width_slider",
-                "height_slider",
-                "steps_slider",
-                "guidance_scale_slider",
-            ):
+            for key in ("width_slider", "height_slider", "steps_slider"):
                 assert at.slider(key=key).value is not None
 
     def test_example_buttons_render(self):
@@ -1429,10 +1471,16 @@ class TestUIWidgets:
                 assert slider.max == 1024
                 assert slider.step == 32
 
-    def test_guidance_slider_uses_g_format(self):
+    def test_no_guidance_slider_rendered(self):
+        # Guidance is pinned (see GUIDANCE). Assert the exact slider set rather
+        # than the absence of one label, so the check can't pass vacuously.
         with _app_test() as app:
             at = app.run(timeout=10)
-            assert at.slider(key="guidance_scale_slider").proto.format == "%g"
+            assert {s.label for s in at.slider} == {
+                "Width",
+                "Height",
+                "Number of inference steps",
+            }
 
     def test_seed_is_number_input(self):
         with _app_test() as app:
@@ -1636,6 +1684,23 @@ class TestUIWidgets:
                 "Could not load the example images" in w.value for w in at.warning
             )
             assert "example_images" not in at.session_state
+
+    def test_missing_example_images_warn_and_clear(self):
+        """A missing path fails in the preview's st.image first, raising
+        MediaFileStorageError rather than OSError; uncaught, it aborted the
+        script before the load guard, and re-raised on every rerun because
+        the key was never cleared."""
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            at.session_state["example_images"] = [str(_REPO_ROOT / "missing.webp")]
+            at.run(timeout=10)
+            assert not at.exception
+            assert any(
+                "Could not load the example images" in w.value for w in at.warning
+            )
+            assert "example_images" not in at.session_state
+            # The rest of the controls column still renders.
+            assert at.button(key="edit_example_0").label
 
     def test_corrupt_upload_warns(self):
         with _app_test() as app:
