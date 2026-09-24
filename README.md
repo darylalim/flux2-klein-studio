@@ -7,9 +7,9 @@
 Streamlit application for generating and editing images using Black Forest Labs [FLUX.2 Klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) on Apple Silicon with MLX, running the [8-bit quantized distilled 4B](https://huggingface.co/mlx-community/flux2-klein-4b-8bit) weights.
 
 <p align="center">
-  <img src="docs/screenshot-dark.png" width="100%" alt="FLUX.2 Klein Studio in Streamlit's dark theme — settings sidebar, prompt bar and canvas">
+  <img src="docs/screenshot-dark.png" width="100%" alt="FLUX.2 Klein Studio in its graphite dark theme — settings sidebar, prompt bar and canvas">
 </p>
-<p align="center"><sub>Settings and examples in the sidebar, a real 4-step generation on the canvas — Streamlit's default dark theme (the stock light theme ships too)</sub></p>
+<p align="center"><sub>Settings and examples in the sidebar, a real 4-step generation on the canvas — the app's graphite dark theme (Streamlit's stock light theme ships too)</sub></p>
 
 ## Features
 
@@ -24,7 +24,7 @@ Streamlit application for generating and editing images using Black Forest Labs 
 - Clickable examples — text-to-image prompts plus an editing example with bundled input images (loading one replaces any manual upload)
 - Per-step progress shown on the canvas, right where the image will land, with a labeled status while the prompt is enhanced and spinners for first-time model loads
 - Configurable seed, dimensions, and inference steps in the sidebar's Advanced settings
-- Streamlit's default light and dark themes — no custom theme or CSS, so the in-app appearance switcher picks the mode
+- A graphite dark theme built for judging images — a neutral surround with no color cast and one ember accent, at WCAG AA contrast — beside Streamlit's stock light theme (except that, as under any custom theme, light mode's Run progress bar turns red). Colors only, set in `.streamlit/config.toml` (no CSS), so the in-app appearance switcher still picks the mode
 - Graceful failure handling — empty runs are blocked; unreadable uploads and generation errors surface inline instead of crashing the app
 
 ## Requirements

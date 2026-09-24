@@ -2,6 +2,7 @@ import contextlib
 import importlib
 import io
 import math
+import re
 import tomllib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -97,6 +98,64 @@ _CONFIG_PATH = _REPO_ROOT / ".streamlit" / "config.toml"
 # absolute path and stay independent of both.
 _APP_PATH = _REPO_ROOT / "streamlit_app.py"
 
+# WCAG 2.x AA minimums: 4.5:1 for normal-size text, 3:1 for the visual boundary
+# of a UI component (success criterion 1.4.11).
+_WCAG_AA_TEXT = 4.5
+_WCAG_AA_NON_TEXT = 3.0
+# Streamlit 1.64 draws a whole st.caption block at this opacity, so a caption
+# link's rendered color is a blend with the surface under it.
+_CAPTION_OPACITY = 0.6
+# Streamlit 1.64's stock dark (fill, text) per alert hue -- `Et` in
+# static/js/utils.*.js, the fill being the hue at 20% alpha. An alert key
+# [theme.dark] leaves unset falls back to these.
+_STOCK_DARK_ALERTS = {
+    "red": ("#FF6C6C33", "#FF6C6C"),
+    "yellow": ("#FFFF1233", "#FFFFC2"),
+    "blue": ("#3D9DF333", "#3D9DF3"),
+}
+# The alerts the app draws, and where: notices.error (red), notices.warning and
+# upsample_prompt's warning (yellow) and the enhanced-prompt banner (blue) in
+# main; image-load warnings (yellow) in the sidebar.
+_APP_ALERTS = {"red": ("page",), "yellow": ("page", "sidebar"), "blue": ("page",)}
+
+
+def _load_dark_theme():
+    """Return the ([theme.dark], [theme.dark.sidebar]) tables of config.toml."""
+    with _CONFIG_PATH.open("rb") as fh:
+        dark = tomllib.load(fh)["theme"]["dark"]
+    return dark, dark.get("sidebar", {})
+
+
+def _rgba(color):
+    """(r, g, b, alpha) of a #rrggbb or #rrggbbaa color; alpha in 0..1."""
+    h = color.lstrip("#")
+    r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
+    return r, g, b, int(h[6:8], 16) / 255 if len(h) == 8 else 1.0
+
+
+def _over(fg, bg, opacity=1.0):
+    """#rrggbb[aa] fg composited over opaque bg, returned as #rrggbb."""
+    *rgb, alpha = _rgba(fg)
+    a = alpha * opacity
+    mixed = (f * a + b * (1 - a) for f, b in zip(rgb, _rgba(bg)[:3], strict=True))
+    return "#" + "".join(f"{round(c):02x}" for c in mixed)
+
+
+def _relative_luminance(color):
+    """WCAG relative luminance of an opaque #rrggbb color."""
+    *rgb, alpha = _rgba(color)
+    assert alpha == 1.0, f"{color} is translucent: composite it with _over first"
+    srgb = [c / 255 for c in rgb]
+    linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in srgb]
+    r, g, b = linear
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast_ratio(fg, bg):
+    """WCAG contrast ratio between two opaque #rrggbb colors (>= 1.0)."""
+    lo, hi = sorted((_relative_luminance(fg), _relative_luminance(bg)))
+    return (hi + 0.05) / (lo + 0.05)
+
 
 def _reload_app(mock_model, *, mock_edit_model=None, mock_vlm=None):
     """Reload app module with mocked heavy dependencies and passthrough cache."""
@@ -183,29 +242,129 @@ class TestConstants:
 
 
 class TestThemeConfig:
-    """.streamlit/config.toml must declare no custom theme.
+    """.streamlit/config.toml: a dark-only color theme over stock light.
 
-    The app ships Streamlit's stock light and dark themes, so the palette and
-    its contrast are Streamlit's contract, not this repo's. What needs locking
-    is the *absence*: any [theme] key makes this a custom theme, and a custom
-    theme with neither [theme.light] nor [theme.dark] populated collapses to a
-    single mode -- the frontend branches on `light || dark`, so one populated
-    variant keeps the switcher while a lone `font` populates neither and costs
-    it. Scope: this reads the committed file, so it cannot see a theme injected
-    at runtime (`--theme.base dark`, STREAMLIT_THEME_*, ~/.streamlit) -- which is
-    what the screenshot recipe in CLAUDE.md deliberately does.
+    Two contracts. Shape: every key lives in [theme.dark] or
+    [theme.dark.sidebar] and is a color. The frontend builds each mode as the
+    top-level [theme] keys plus that mode's table, so anything outside the dark
+    tables leaks into light mode (a lone top-level `font` would populate
+    neither table and cost the Light/Dark/System switcher outright). Contrast:
+    the palette is this repo's own now, so WCAG AA is too.
+
+    The contrast tests model these Streamlit 1.64 frontend behaviors, to be
+    re-checked on an upgrade: the sidebar inherits every dark key it does not
+    override, its background falling back to secondaryBackgroundColor; the
+    primary button's label is white; the prompt field and the progress track
+    are secondaryBackgroundColor, the progress fill primaryColor; links are
+    linkColor, else blueTextColor; st.caption draws at 0.6 opacity; and
+    st.error/warning/info draw red/yellow/blue *BackgroundColor (translucent)
+    under *TextColor, falling back to _STOCK_DARK_ALERTS. Scope: this reads the
+    committed file, so it cannot see a theme injected at runtime
+    (STREAMLIT_THEME_*, ~/.streamlit), nor the one light-mode cost a custom
+    theme carries (the Run progress bar turns primary red; see config.toml).
     """
 
-    def test_no_custom_theme_is_declared(self):
-        assert _CONFIG_PATH.is_file(), (
-            f"{_CONFIG_PATH.name} is gone, and with it the only record of why "
-            "the theme is empty -- keep the file even though it sets nothing"
-        )
+    def test_only_the_dark_tables_are_declared(self):
         with _CONFIG_PATH.open("rb") as fh:
-            config = tomllib.load(fh)
-        assert "theme" not in config, (
-            f"custom theme declared in {_CONFIG_PATH.name}: {sorted(config['theme'])}"
+            theme = tomllib.load(fh)["theme"]
+        assert set(theme) == {"dark"}, (
+            f"[theme] keys outside [theme.dark] leak into light mode: "
+            f"{sorted(set(theme) - {'dark'})}"
         )
+        tables = {k for k, v in theme["dark"].items() if isinstance(v, dict)}
+        assert tables <= {"sidebar"}, f"unexpected tables: {sorted(tables)}"
+
+    def test_only_color_keys_are_set(self):
+        # The canvas fold budget is measured against stock font, size and
+        # radius metrics, and a mode switch should change nothing but color.
+        # Values must be #rrggbb, the format the contrast helpers read; only an
+        # alert fill, which they composite, may carry an alpha byte. (The app
+        # draws no charts, so the chart*Colors lists have no place here.)
+        dark, sidebar = _load_dark_theme()
+        tables = {"theme.dark": dark, "theme.dark.sidebar": sidebar}
+        alert_fill = re.compile(r"(red|orange|yellow|green|blue|violet)BackgroundColor")
+        opaque, translucent = r"#[0-9A-Fa-f]{6}", r"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?"
+        for name, table in tables.items():
+            for key, value in table.items():
+                if isinstance(value, dict):
+                    continue
+                assert key.endswith("Color"), f"[{name}] {key}"
+                pattern = translucent if alert_fill.fullmatch(key) else opaque
+                assert re.fullmatch(pattern, value), (
+                    f"[{name}] {key} = {value!r}: not a #rrggbb color"
+                )
+
+    def test_body_text_contrast_meets_wcag_aa(self):
+        dark, sidebar = _load_dark_theme()
+        text = dark["textColor"]
+        pairs = {
+            "page": (text, dark["backgroundColor"]),
+            "prompt field": (text, dark["secondaryBackgroundColor"]),
+            "sidebar": (
+                sidebar.get("textColor", text),
+                sidebar.get("backgroundColor", dark["secondaryBackgroundColor"]),
+            ),
+        }
+        for name, (fg, bg) in pairs.items():
+            ratio = _contrast_ratio(fg, bg)
+            assert ratio >= _WCAG_AA_TEXT, f"text on {name}: {ratio:.2f}:1"
+
+    def test_run_button_meets_wcag_aa(self):
+        # Streamlit draws the primary button's label white on primaryColor --
+        # stock #FF4B4B gave 3.30:1. The button must also stand out from the
+        # page, and as the prompt field's focus border and the progress fill
+        # it sits on secondaryBackgroundColor.
+        dark, _ = _load_dark_theme()
+        primary = dark["primaryColor"]
+        label = _contrast_ratio("#ffffff", primary)
+        assert label >= _WCAG_AA_TEXT, f"Run label: {label:.2f}:1"
+        for surface in ("backgroundColor", "secondaryBackgroundColor"):
+            ratio = _contrast_ratio(primary, dark[surface])
+            assert ratio >= _WCAG_AA_NON_TEXT, f"primary on {surface}: {ratio:.2f}:1"
+
+    def test_sidebar_accent_reads_as_text(self):
+        # The slider values are text in the sidebar's primaryColor. A primary
+        # dark enough for a white label cannot also pass on a non-black panel,
+        # so the sidebar carries its own, lighter one.
+        dark, sidebar = _load_dark_theme()
+        accent = sidebar.get("primaryColor", dark["primaryColor"])
+        panel = sidebar.get("backgroundColor", dark["secondaryBackgroundColor"])
+        ratio = _contrast_ratio(accent, panel)
+        assert ratio >= _WCAG_AA_TEXT, f"slider values: {ratio:.2f}:1"
+
+    def test_caption_links_meet_wcag_aa_through_the_caption_opacity(self):
+        # The app's only links are in the sidebar's model caption. Unset, a
+        # link is the theme's blueTextColor, which measured 2.77:1 through the
+        # caption's opacity on stock dark.
+        dark, sidebar = _load_dark_theme()
+        link = sidebar.get("linkColor", dark.get("linkColor"))
+        assert link is not None, "linkColor unset: links fall back to blueTextColor"
+        panel = sidebar.get("backgroundColor", dark["secondaryBackgroundColor"])
+        rendered = _over(link, panel, opacity=_CAPTION_OPACITY)
+        ratio = _contrast_ratio(rendered, panel)
+        assert ratio >= _WCAG_AA_TEXT, f"caption link {rendered}: {ratio:.2f}:1"
+
+    def test_alert_text_contrast_meets_wcag_aa(self):
+        # Every alert the app draws, on each surface it draws on, whether or
+        # not the config restyles its hue: an unset key is stock, and stock red
+        # measures 4.40:1 on a #1E1E1E page. Alert fills are translucent, so
+        # the text is measured against the fill composited onto the surface.
+        dark, sidebar = _load_dark_theme()
+        surfaces = {
+            "page": dark["backgroundColor"],
+            "sidebar": sidebar.get("backgroundColor", dark["secondaryBackgroundColor"]),
+        }
+        for hue, where in _APP_ALERTS.items():
+            # A <hue>Color would derive the unset keys instead of stock.
+            assert f"{hue}Color" not in dark, f"{hue}Color is set: model its derivation"
+            stock_fill, stock_text = _STOCK_DARK_ALERTS[hue]
+            text = dark.get(f"{hue}TextColor", stock_text)
+            for name in where:
+                fill = _over(
+                    dark.get(f"{hue}BackgroundColor", stock_fill), surfaces[name]
+                )
+                ratio = _contrast_ratio(text, fill)
+                assert ratio >= _WCAG_AA_TEXT, f"{hue} alert on {name}: {ratio:.2f}:1"
 
 
 class TestModelLoading:
@@ -706,7 +865,7 @@ class TestCanvasGeometry:
         for w, h in [(1024, 1024), (672, 1024), (1024, 576), (256, 1024)]:
             canvas = streamlit_app._blank_canvas(w, h)
             assert canvas.width * h == canvas.height * w
-            # Translucent, so it reads on both stock themes.
+            # Translucent, so it reads on stock light and the graphite dark theme.
             assert canvas.mode == "RGBA"
             assert canvas.getpixel((0, 0))[3] < 255
 
