@@ -7,23 +7,23 @@
 Streamlit application for generating and editing images using Black Forest Labs [FLUX.2 Klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) on Apple Silicon with MLX, running the [8-bit quantized distilled 4B](https://huggingface.co/mlx-community/flux2-klein-4b-8bit) weights.
 
 <p align="center">
-  <img src="docs/screenshot-dark.png" width="100%" alt="FLUX.2 Klein Studio — the two-column studio in Streamlit's dark theme">
+  <img src="docs/screenshot-dark.png" width="100%" alt="FLUX.2 Klein Studio in Streamlit's dark theme — settings sidebar, prompt bar and canvas">
 </p>
-<p align="center"><sub>The two-column studio in Streamlit's default dark theme — the stock light theme ships too</sub></p>
+<p align="center"><sub>Settings and examples in the sidebar, a real 4-step generation on the canvas — Streamlit's default dark theme (the stock light theme ships too)</sub></p>
 
 ## Features
 
 - Unified generation and editing — text-to-image by default; uploading one or more images switches to editing automatically
 - 8-bit quantized weights — an 8.6GB download instead of 16GB, with no local quantization pass at load (see Requirements for the memory picture, which is a separate question from download size)
 - Native Apple Silicon performance via MLX — inference runs on MLX, not PyTorch
-- Two-column studio layout: controls on the left, generated image on the right
+- Sidebar + canvas layout: input images, settings and examples live in the sidebar; the main area is a full-width prompt bar over a canvas sized to keep the whole image and its seed on screen
 - Enter to run — the prompt row is a borderless form, so pressing Enter submits the run
 - Multi-image upload for editing and compositing workflows
 - Auto-dimension: width/height sliders adjust to match the first input image's aspect ratio
-- Optional vision-aware prompt upsampling via Qwen3-VL-2B-Instruct — a toggle in Advanced settings; the VLM can see uploaded images when enhancing edit prompts (loaded on first use)
+- Optional vision-aware prompt upsampling via Qwen3-VL-2B-Instruct — a toggle in the sidebar's Advanced settings; the VLM can see uploaded images when enhancing edit prompts (loaded on first use)
 - Clickable examples — text-to-image prompts plus an editing example with bundled input images (loading one replaces any manual upload)
-- Per-step progress bar shown inside the output frame during inference, with labeled spinners for first-time model loads and prompt enhancement
-- Configurable seed, dimensions, and inference steps in Advanced settings
+- Per-step progress shown on the canvas, right where the image will land, with a labeled status while the prompt is enhanced and spinners for first-time model loads
+- Configurable seed, dimensions, and inference steps in the sidebar's Advanced settings
 - Streamlit's default light and dark themes — no custom theme or CSS, so the in-app appearance switcher picks the mode
 - Graceful failure handling — empty runs are blocked; unreadable uploads and generation errors surface inline instead of crashing the app
 
@@ -45,11 +45,11 @@ The app loads [`mlx-community/flux2-klein-4b-8bit`](https://huggingface.co/mlx-c
 
 ## Usage
 
-The studio opens with controls on the left and the output on the right.
+The studio opens with input images, settings and examples in the sidebar, and a prompt bar over the canvas. Until the first run, a blank canvas previews the output size. On narrow windows the sidebar collapses behind the » toggle, but the prompt bar and the canvas stay put.
 
-**Text-to-image** — type a prompt, then press **Enter** or click **Run**. The generated image appears on the right, labeled with the seed used.
+**Text-to-image** — type a prompt, then press **Enter** or click **Run**. The generated image appears on the canvas, labeled with the seed used.
 
-**Editing and compositing** — expand **Input image(s)** and upload one or more files (JPG, PNG, or WebP). The app switches to editing automatically — there's no generate/edit switch to flip. The width and height sliders snap to the first image's aspect ratio; describe the change and Run. With multiple images you can composite across them — the bundled editing example turns these three inputs into a single scene:
+**Editing and compositing** — expand **Input image(s)** in the sidebar and upload one or more files (JPG, PNG, or WebP). The app switches to editing automatically — there's no generate/edit switch to flip. The width and height sliders snap to the first image's aspect ratio; describe the change and Run. With multiple images you can composite across them — the bundled editing example turns these three inputs into a single scene:
 
 <p align="center">
   <img src="examples/woman1.webp" height="260" alt="Editing input: person">
@@ -57,13 +57,13 @@ The studio opens with controls on the left and the output on the right.
   <img src="examples/bird.webp" height="260" alt="Editing input: bird">
 </p>
 
-**Advanced settings** (collapsed by default):
+**Advanced settings** (in the sidebar, collapsed by default):
 
 - **Prompt upsampling** — a vision-language model (Qwen3-VL-2B) rewrites your prompt into a more descriptive one; when editing, it can see your uploaded images. Off by default.
 - **Seed** — *Randomize* is **on** by default, so each Run varies. Turn it off and set a seed for reproducible results.
 - **Width / Height / Number of inference steps** — fine-tune output size and sampling. The distilled model is tuned for 4 steps (the default), but the steps slider stays open if you want to push further. There is no guidance control: the model is guidance-free by design, so guidance stays fixed at 1.0. Higher values would switch on classifier-free guidance, roughly doubling the cost of each step and pulling the output away from what the distilled model was tuned for.
 
-**Examples** — click a prompt example to fill the box, or an editing example to load its prompt together with its bundled input images.
+**Examples** — in the sidebar, click a prompt example to fill the box, or an editing example to load its prompt together with its bundled input images.
 
 ## Development
 

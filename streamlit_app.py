@@ -3,6 +3,7 @@ import random
 from pathlib import Path
 from typing import cast
 
+import mlx.core as mx
 import streamlit as st
 from mflux.models.common.config import ModelConfig
 from mflux.models.flux2.variants import Flux2Klein, Flux2KleinEdit
@@ -18,9 +19,39 @@ APP_TITLE = "FLUX.2 Klein Studio"
 MAX_SEED = 2_147_483_647
 MAX_IMAGE_SIZE = 1024
 
-# Fixed height for the idle/generating output frame so it doesn't collapse
-# between states (the result image then sizes to its own content).
-OUTPUT_FRAME_HEIGHT = 420
+# Start width of the sidebar in px (set_page_config accepts 200-600; Streamlit's
+# default is 300). An int keeps "auto" behavior -- expanded on desktop,
+# collapsed on narrow viewports. 320 is the narrowest that keeps every example
+# label to two lines (at 300 two of them wrap to three, growing the sidebar
+# from 931 to 998px and pushing the model caption past an 880px fold) and the
+# Width | Height pair side by side inside Advanced settings; every px it gives
+# back widens the canvas.
+SIDEBAR_WIDTH = 320
+
+# The canvas. st.image has no height parameter and Streamlit exposes no
+# viewport size to Python, so a picture's drawn height is bounded through its
+# width, two ways at once:
+#  - CANVAS_HEIGHT_RATIO: the picture's column spans min(1, aspect x ratio) of
+#    the main area, so any aspect is drawn at most ratio x main-area-width tall.
+#    It tracks the window: with the sidebar open, 0.6 keeps picture and seed
+#    caption on screen in laptop-shaped windows down to 1280x720 and 1440x790.
+#    At viewports of 640px or less Streamlit stacks the columns and the
+#    picture spans the full width, so only the cap below bounds it there.
+#  - CANVAS_MAX_HEIGHT: _canvas's inner frame, which st.image stretches to
+#    fill, gets width = max height x aspect, and Streamlit caps an int
+#    container width to its column. It holds where the main area widens
+#    without the window growing taller -- a collapsed sidebar, or a 16:9
+#    monitor, where 0.6 x width alone would overshoot the fold -- in windows
+#    at least 842px tall; shorter ones with the sidebar collapsed clip.
+# Retune all three constants together, re-measuring against
+# TestCanvasGeometry._FOLD_VIEWPORTS and the canvas bullet in CLAUDE.md.
+CANVAS_HEIGHT_RATIO = 0.6
+CANVAS_MAX_HEIGHT = 660
+
+# Fill of the blank canvas that stands in for the picture before it exists.
+# Mid-gray at low alpha reads as a faint panel on both stock themes, so no
+# theme color is hard-coded.
+CANVAS_FILL = (128, 128, 128, 28)
 
 VLM_MODEL_ID = "mlx-community/Qwen3-VL-2B-Instruct-8bit"
 
@@ -77,6 +108,19 @@ EDIT_EXAMPLES = [
 ]
 
 
+def _materialized(model):
+    """Evaluate a freshly built mflux model's weights before it is cached.
+
+    Streamlit runs each rerun on a new thread, and MLX's default streams are
+    per-thread. mflux hands back lazily loaded weights bound to the loading
+    thread's stream, so a cached model would work only on the rerun that built
+    it: every later Run fails with "There is no Stream(cpu, 0) in current
+    thread". mlx-vlm's load() already evaluates eagerly, so _get_vlm is fine.
+    """
+    mx.eval(model.parameters())
+    return model
+
+
 # model_path picks the weights; model_config supplies the architecture (its
 # transformer/text-encoder overrides), which mflux does not read from the repo.
 # Passing it is redundant *today* — mflux itself defaults to
@@ -85,13 +129,15 @@ EDIT_EXAMPLES = [
 # load-bearing the moment MODEL_REPO points at anything but a 4b build.
 @st.cache_resource(show_spinner="Loading FLUX.2 Klein (8-bit)…")
 def _get_model():
-    return Flux2Klein(model_path=MODEL_REPO, model_config=ModelConfig.flux2_klein_4b())
+    return _materialized(
+        Flux2Klein(model_path=MODEL_REPO, model_config=ModelConfig.flux2_klein_4b())
+    )
 
 
 @st.cache_resource(show_spinner="Loading FLUX.2 Klein Edit (8-bit)…")
 def _get_edit_model():
-    return Flux2KleinEdit(
-        model_path=MODEL_REPO, model_config=ModelConfig.flux2_klein_4b()
+    return _materialized(
+        Flux2KleinEdit(model_path=MODEL_REPO, model_config=ModelConfig.flux2_klein_4b())
     )
 
 
@@ -281,6 +327,53 @@ def _dimensions_from_images(image_list):
     return max(256, min(MAX_IMAGE_SIZE, new_w)), max(256, min(MAX_IMAGE_SIZE, new_h))
 
 
+def _canvas_spec(width, height):
+    """Column spec centering a width x height picture on the canvas, or None.
+
+    The middle share is what bounds the drawn height to CANVAS_HEIGHT_RATIO x
+    the main area's width; None means the picture is wide enough to span it.
+    """
+    if width <= 0 or height <= 0:
+        return None
+    share = min(1.0, width / height * CANVAS_HEIGHT_RATIO)
+    if share >= 1.0:
+        return None
+    margin = (1.0 - share) / 2
+    return [margin, share, margin]
+
+
+def _canvas_display_width(width, height):
+    """Pixel width at which a width x height picture is CANVAS_MAX_HEIGHT tall."""
+    if width <= 0 or height <= 0:
+        return CANVAS_MAX_HEIGHT
+    return max(1, round(CANVAS_MAX_HEIGHT * width / height))
+
+
+def _blank_canvas(width, height):
+    """The empty canvas: a CANVAS_FILL swatch with the output's aspect ratio.
+
+    Tiny on purpose -- st.image scales it, and a flat fill has no detail to
+    lose. Slider sizes are multiples of 32, so dividing keeps the ratio exact.
+    """
+    return Image.new("RGBA", (max(1, width // 32), max(1, height // 32)), CANVAS_FILL)
+
+
+def _canvas(width, height):
+    """The container a width x height picture is drawn in, centered in main.
+
+    Its width is the picture's drawn width -- the lesser of the column share
+    (the ratio bound) and _canvas_display_width (the pixel cap; Streamlit caps
+    an int container width to its parent) -- so a width="stretch" picture
+    fills it exactly and its caption and the run status line up with the
+    picture's edges. Calls st.columns, so only the UI block may call it.
+    """
+    spec = _canvas_spec(width, height)
+    column = st.columns(spec, gap=None)[1] if spec else st.container()
+    return column.container(horizontal_alignment="center").container(
+        width=_canvas_display_width(width, height), gap="xsmall"
+    )
+
+
 def infer(
     prompt,
     seed=42,
@@ -341,45 +434,63 @@ if __name__ == "__main__":
         page_title=APP_TITLE,
         page_icon=":material/auto_awesome:",
         layout="wide",
+        initial_sidebar_state=SIDEBAR_WIDTH,
     )
+    # Fills the sidebar's header row, and stays in the app header when the
+    # sidebar (and the title inside it) is collapsed.
+    st.logo(":material/auto_awesome:", size="large")
 
-    st.title(APP_TITLE)
+    # Main area = prompt bar + canvas; every other control lives in the
+    # sidebar. The prompt stays out of the sidebar on purpose: "auto" collapses
+    # it on narrow viewports, and the primary action must never sit behind
+    # that toggle.
+    #
+    # A borderless form makes Enter in the prompt box submit the run; the
+    # horizontal container lets the input stretch while the button hugs its
+    # icon+label content.
+    with (
+        st.form("prompt_form", border=False),
+        st.container(horizontal=True, vertical_alignment="bottom"),
+    ):
+        prompt = st.text_input(
+            "Prompt",
+            placeholder="Enter your prompt",
+            key="prompt_input",
+            label_visibility="collapsed",
+            width="stretch",
+        )
+        run_clicked = st.form_submit_button(
+            "Run",
+            type="primary",
+            icon=":material/play_arrow:",
+        )
 
-    col_controls, col_output = st.columns([2, 3], gap="large")
+    # Run notices (empty-run guard, enhancement failure, generation error)
+    # render between the prompt bar and the canvas: in main,
+    # so a collapsed sidebar cannot hide them, and outside result_slot, which
+    # the bottom render block overwrites on every run. Empty, it takes no space.
+    notices = st.container()
 
-    # Reserve the output slot in the right column (filled after inference / on
-    # rerun). Progress and the final image share this one slot so the live
-    # status renders inside the same frame the image lands in.
-    with col_output:
-        result_slot = st.empty()
+    # The canvas. The blank canvas, the run's status and the final image share
+    # this one slot at one geometry, so each state draws where the image lands.
+    result_slot = st.empty()
 
-    with col_controls:
-        # Prompt + Run, inline at the top (like the Gradio space). A borderless
-        # form makes Enter in the prompt box submit the run; the horizontal
-        # container lets the input stretch while the button hugs its icon+label
-        # content, so the Run label never gets crammed into a narrow column and
-        # wraps character-by-character.
-        with (
-            st.form("prompt_form", border=False),
-            st.container(horizontal=True, vertical_alignment="bottom"),
-        ):
-            prompt = st.text_input(
-                "Prompt",
-                placeholder="Enter your prompt",
-                key="prompt_input",
-                label_visibility="collapsed",
-                width="stretch",
-            )
-            run_clicked = st.form_submit_button(
-                "Run",
-                type="primary",
-                icon=":material/play_arrow:",
-            )
+    # The enhanced prompt the model actually received, under the canvas: in
+    # main, and below the picture so its height never pushes the picture down.
+    enhanced_slot = st.empty()
 
-        # Optional input images — uploading any switches to editing automatically.
-        # The keyed expander mirrors its open/closed state in session state, so
-        # loading an example opens it programmatically (see _load_edit_example)
-        # while the user's own toggling is respected on later reruns.
+    # Sidebar: the title, input images, settings and examples. What matters to
+    # Streamlit is script order, not where a block draws: the image loading
+    # below writes the width/height slider keys, so it -- and the setdefault
+    # seeding -- must execute before the Advanced settings expander creates
+    # those sliders. Keep this block's internal order.
+    with st.sidebar:
+        st.title(APP_TITLE, anchor=False)
+
+        # Optional input images — uploading any switches to editing
+        # automatically. The keyed expander mirrors its open/closed state in
+        # session state, so loading an example opens it programmatically (see
+        # _load_edit_example) while the user's own toggling is respected.
         _has_example_images = bool(st.session_state.get("example_images"))
         with st.expander(
             "Input image(s) (optional)",
@@ -396,15 +507,19 @@ if __name__ == "__main__":
             )
             if not uploaded_files and _has_example_images:
                 st.caption("Loaded example images:")
-                # Unreadable paths would crash this preview before the load guard
-                # below runs; that guard warns and clears them. A file that isn't
-                # an image raises UnidentifiedImageError (an OSError); one that
-                # can't be opened at all raises MediaFileStorageError from
-                # Streamlit's media storage, a plain Exception subclass.
+                # Unreadable paths would crash this preview before the load
+                # guard below runs; that guard warns and clears them. A file
+                # that isn't an image raises UnidentifiedImageError (an
+                # OSError); one that can't be opened at all raises
+                # MediaFileStorageError from Streamlit's media storage, a plain
+                # Exception subclass.
+                # 72px keeps the bundled three on one row in the 320px sidebar.
                 with contextlib.suppress(OSError, MediaFileStorageError):
-                    st.image(st.session_state.example_images, width=80)
+                    st.image(st.session_state.example_images, width=72)
                 st.button("Clear example images", on_click=_clear_example_images)
 
+        # Load warnings render here, under the uploader or example that caused
+        # them.
         image_list = None
         if uploaded_files:
             # A manual upload overrides any loaded example images
@@ -434,12 +549,13 @@ if __name__ == "__main__":
             _image_key = ()
         if _image_key != st.session_state.get("prev_images", ()):
             st.session_state.prev_images = _image_key
-            # An enhanced prompt is tied to its image set; drop it when that changes.
+            # An enhanced prompt is tied to its image set; drop it when that
+            # changes.
             st.session_state.pop("auto_enhanced_prompt", None)
             # Match the sliders to a new input image, but leave a manual size
             # untouched when the image set is cleared. Writes the width/height
-            # slider keys, so it must stay above the Advanced settings expander
-            # that instantiates those sliders.
+            # slider keys, so it must execute before the Advanced settings
+            # expander below instantiates those sliders.
             if image_list:
                 _w, _h = _dimensions_from_images(image_list)
                 st.session_state.width_slider = _w
@@ -461,15 +577,16 @@ if __name__ == "__main__":
         st.session_state.setdefault("height_slider", 1024)
         st.session_state.setdefault("steps_slider", DEFAULT_STEPS)
 
-        # The three sliders below are instantiated on every run — two invariants
-        # to preserve:
+        # The three sliders below are instantiated on every run — two
+        # invariants to preserve:
         #  1. Keys seeded above (width/height on image change, plus the steps
-        #     default) are written before this line, so they land before the
-        #     widgets exist. Keep those blocks above this expander.
+        #     default) are written before this line in *script* order, so they
+        #     land before the widgets exist. Keep those blocks above this
+        #     expander; the sidebar they draw in does not change that.
         #  2. Do NOT gate this body with on_change="rerun" + `.open` to skip it
-        #     when collapsed: the slider return values feed infer() below, so they
-        #     must be assigned every run — a collapsed, un-run body leaves them
-        #     unset (NameError at generate time).
+        #     when collapsed: the slider return values feed infer() below, so
+        #     they must be assigned every run — a collapsed, un-run body leaves
+        #     them unset (NameError at generate time).
         with st.expander("Advanced settings", icon=":material/tune:", expanded=False):
             auto_enhance = st.toggle(
                 "Prompt upsampling",
@@ -514,133 +631,178 @@ if __name__ == "__main__":
                 key="steps_slider",
             )
 
+        # One full-width button per example: the sidebar is one column wide.
         st.markdown("**Examples**")
-        _ex_cols = st.columns(2)
         for _i, _example in enumerate(EXAMPLE_PROMPTS):
-            with _ex_cols[_i % 2]:
-                st.button(
-                    _truncate(_example),
-                    key=f"example_{_i}",
-                    on_click=_set_example_prompt,
-                    args=(_example,),
-                    width="stretch",
-                    help=_example,
-                    # Since Streamlit 1.63 a button placed directly in a column
-                    # defaults to one ellipsized line (~30 chars here), which
-                    # would hide most of what _truncate leaves visible.
-                    wrap=True,
-                )
+            st.button(
+                _truncate(_example),
+                key=f"example_{_i}",
+                on_click=_set_example_prompt,
+                args=(_example,),
+                width="stretch",
+                help=_example,
+                # Explicit so the label wraps wherever the button lands: since
+                # Streamlit 1.63 a button placed directly in a column or a
+                # horizontal container defaults to one ellipsized line.
+                wrap=True,
+            )
 
         st.markdown("**Editing examples**")
         for _i, (_ex_prompt, _ex_imgs) in enumerate(EDIT_EXAMPLES):
-            _col_prompt, _col_imgs = st.columns([3, 2], vertical_alignment="center")
-            with _col_prompt:
-                st.button(
-                    _truncate(_ex_prompt),
-                    key=f"edit_example_{_i}",
-                    on_click=_load_edit_example,
-                    args=(_ex_prompt, _ex_imgs),
-                    width="stretch",
-                    help=_ex_prompt,
-                    wrap=True,
-                )
-            with _col_imgs:
-                st.image(_ex_imgs, width=56)
-
-        if run_clicked and not final_prompt.strip() and not image_list:
-            # The Run button is always enabled, so guard the empty request here
-            # rather than run the VLM and a full diffusion pass on nothing.
-            st.warning(
-                "Enter a prompt or add an input image.",
-                icon=":material/warning:",
+            st.button(
+                _truncate(_ex_prompt),
+                key=f"edit_example_{_i}",
+                on_click=_load_edit_example,
+                args=(_ex_prompt, _ex_imgs),
+                width="stretch",
+                help=_ex_prompt,
+                wrap=True,
             )
-        elif run_clicked:
-            st.session_state.pop("auto_enhanced_prompt", None)
+            st.image(_ex_imgs, width=56)
 
-            cache = st.session_state.setdefault("_enhance_cache", {})
-            cache_key = (final_prompt, _image_key) if auto_enhance else None
+        # App metadata closes the sidebar (Streamlit's layout guidance: settings
+        # and small app info there, content in main).
+        st.caption(
+            f"[FLUX.2 Klein 4B](https://huggingface.co/{MODEL_REPO}) 8-bit · "
+            f"prompt upsampling by [Qwen3-VL 2B](https://huggingface.co/{VLM_MODEL_ID})"
+            " · runs on MLX"
+        )
 
-            if cache_key is not None and cache_key in cache:
-                run_prompt, was_auto_enhanced = cache[cache_key], True
+    if run_clicked and not final_prompt.strip() and not image_list:
+        # The Run button is always enabled, so guard the empty request here
+        # rather than run the VLM and a full diffusion pass on nothing.
+        notices.warning(
+            "Enter a prompt or add an input image.",
+            icon=":material/warning:",
+        )
+    elif run_clicked:
+        st.session_state.pop("auto_enhanced_prompt", None)
+
+        cache = st.session_state.setdefault("_enhance_cache", {})
+        cache_key = (final_prompt, _image_key) if auto_enhance else None
+        needs_vlm = auto_enhance and cache_key not in cache
+
+        # The run's one status sits under the blank canvas, where the seed
+        # caption will go: the canvas holds still from idle to run to result,
+        # and the fold budget that keeps the caption on screen keeps the
+        # status label there too. It opens before the VLM call so an enhanced
+        # Run is never silent, and carries the whole run in its label. It stays
+        # closed while enhancing, when its body would be empty.
+        with result_slot.container(), _canvas(width, height):
+            st.image(_blank_canvas(width, height), width="stretch")
+            status = st.status(
+                "Enhancing prompt…" if needs_vlm else "Generating image…",
+                expanded=not needs_vlm,
+            )
+            # Room for the first-use VLM load spinner, under the status. A
+            # cached-function spinner is a transient that overflows an empty
+            # container, so in notices it would overlap the canvas and leave
+            # it shifted for the rest of the run.
+            vlm_load_slot = st.container()
+
+        if needs_vlm:
+            # Warm the VLM here so the call in notices below is a cache hit. A
+            # failed load is retried there, where upsample_prompt reports it.
+            with vlm_load_slot, contextlib.suppress(Exception):
+                _get_vlm()
+
+        if cache_key is not None and cache_key in cache:
+            run_prompt, was_auto_enhanced = cache[cache_key], True
+        else:
+            # In notices, not the status: upsample_prompt's failure warning
+            # must outlive result_slot, which the bottom block overwrites.
+            with notices:
+                run_prompt, was_auto_enhanced = _resolve_prompt(
+                    final_prompt, image_list, auto_enhance
+                )
+            if was_auto_enhanced and cache_key is not None:
+                cache[cache_key] = run_prompt
+                # Bound the per-session cache so a long editing session
+                # can't accumulate enhanced prompts without limit.
+                if len(cache) > 32:
+                    cache.pop(next(iter(cache)))
+
+        generation_error = None
+        with status:
+            # expanded=True on every mid-run update: in Streamlit 1.64 a label
+            # change without it resets the status to closed, hiding the bar.
+            status.update(label="Generating image…", expanded=True)
+            progress_bar = st.progress(0, text="Starting…")
+
+            def _update_progress(step, total):
+                progress_bar.progress(step / total, text=f"Step {step}/{total}")
+                # The label repeats the count, so progress reads from the
+                # header alone when the body sits below the fold.
+                status.update(
+                    label=f"Generating image… step {step}/{total}", expanded=True
+                )
+
+            try:
+                image, used_seed = infer(
+                    run_prompt,
+                    seed_val,
+                    randomize_seed,
+                    width,
+                    height,
+                    num_inference_steps,
+                    image_list=image_list,
+                    progress_callback=_update_progress,
+                )
+            except Exception as exc:
+                status.update(label="Generation failed", state="error")
+                generation_error = str(exc)
             else:
-                # The VLM call takes seconds (plus a first-use model load), and
-                # it runs before the status frame opens — show a spinner so an
-                # enhanced Run isn't silent. Skipped when upsampling is off.
-                _enhance_ctx = (
-                    st.spinner("Enhancing prompt…")
-                    if auto_enhance
-                    else contextlib.nullcontext()
-                )
-                with _enhance_ctx:
-                    run_prompt, was_auto_enhanced = _resolve_prompt(
-                        final_prompt, image_list, auto_enhance
-                    )
-                if was_auto_enhanced and cache_key is not None:
-                    cache[cache_key] = run_prompt
-                    # Bound the per-session cache so a long editing session
-                    # can't accumulate enhanced prompts without limit.
-                    if len(cache) > 32:
-                        cache.pop(next(iter(cache)))
+                status.update(label="Image generated", state="complete")
+                st.session_state.result_image = image
+                st.session_state.result_seed = used_seed
+                # Only on success: the banner sits under the image it made,
+                # never under an older one after a failed run. A retry still
+                # reuses the enhancement from _enhance_cache.
+                if was_auto_enhanced:
+                    st.session_state.auto_enhanced_prompt = run_prompt
 
-            if was_auto_enhanced:
-                st.session_state.auto_enhanced_prompt = run_prompt
-
-            generation_error = None
-            with (
-                result_slot.container(border=True, height=OUTPUT_FRAME_HEIGHT),
-                st.status("Generating image…", expanded=True) as status,
-            ):
-                progress_bar = st.progress(0, text="Starting…")
-
-                def _update_progress(step, total):
-                    progress_bar.progress(step / total, text=f"Step {step}/{total}")
-
-                try:
-                    image, used_seed = infer(
-                        run_prompt,
-                        seed_val,
-                        randomize_seed,
-                        width,
-                        height,
-                        num_inference_steps,
-                        image_list=image_list,
-                        progress_callback=_update_progress,
-                    )
-                except Exception as exc:
-                    status.update(label="Generation failed", state="error")
-                    generation_error = str(exc)
-                else:
-                    status.update(label="Image generated", state="complete")
-                    st.session_state.result_image = image
-                    st.session_state.result_seed = used_seed
-
-            # Surface a failure in the controls column, where it survives the
-            # bottom block re-rendering result_slot (which overwrites the status).
-            if generation_error is not None:
-                st.error(
-                    f"Image generation failed: {generation_error}",
-                    icon=":material/error:",
-                )
-
-        if auto_enhance and "auto_enhanced_prompt" in st.session_state:
-            st.info(
-                f"Enhanced prompt: {st.session_state.auto_enhanced_prompt}",
-                icon=":material/auto_awesome:",
+        # Surface a failure in notices, where it survives the bottom block
+        # re-rendering result_slot (which overwrites the status).
+        if generation_error is not None:
+            notices.error(
+                f"Image generation failed: {generation_error}",
+                icon=":material/error:",
             )
 
-    # Output (right column): result image, or a placeholder canvas. Both states
-    # share a bordered container so the output frame stays consistent, and the
-    # placeholder uses native theme-aware centering instead of raw-HTML colors.
-    if "result_image" in st.session_state:
-        with result_slot.container(border=True, horizontal_alignment="center"):
-            st.image(st.session_state.result_image, width="stretch")
-            if st.session_state.result_seed is not None:
-                st.caption(f"Seed: {st.session_state.result_seed}")
-    else:
-        with result_slot.container(
-            border=True,
-            height=OUTPUT_FRAME_HEIGHT,
-            horizontal_alignment="center",
-            vertical_alignment="center",
-        ):
-            st.markdown(":gray[:material/image: Your image will appear here]")
+    if auto_enhance and "auto_enhanced_prompt" in st.session_state:
+        enhanced_slot.info(
+            f"Enhanced prompt: {st.session_state.auto_enhanced_prompt}",
+            icon=":material/auto_awesome:",
+        )
+
+    # The canvas: the result image, or the blank canvas at the requested size.
+    # Both share one geometry, so the image lands exactly where the blank
+    # canvas stood; the placeholder text is a theme-aware :gray[] line.
+    with result_slot.container():
+        if "result_image" in st.session_state:
+            _result = st.session_state.result_image
+            with _canvas(*_result.size):
+                st.image(_result, width="stretch")
+                if st.session_state.result_seed is not None:
+                    st.caption(f"Seed: {st.session_state.result_seed}")
+        else:
+            with _canvas(width, height):
+                st.image(_blank_canvas(width, height), width="stretch")
+                if image_list:
+                    _n = len(image_list)
+                    _hint = (
+                        f"Editing {_n} input image{'s' if _n > 1 else ''}: "
+                        "describe the change, then Run."
+                    )
+                else:
+                    _hint = (
+                        "Describe an image and Run, or start from an example "
+                        "in the sidebar."
+                    )
+                # One element, two lines: the placeholder, then a small hint --
+                # the only pointer to the examples when the sidebar is collapsed.
+                # Non-breaking spaces keep "W × H" whole on a narrow canvas.
+                st.markdown(
+                    f":gray[:material/image: Your image will appear here · "
+                    f"{width} × {height}]  \n:gray[:small[{_hint}]]"
+                )

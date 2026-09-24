@@ -98,6 +98,35 @@ def test_progress_callback_fires_and_is_deregistered(app):
     assert app._get_model().callbacks.in_loop == [], "reporter left registered"
 
 
+def test_cached_models_generate_on_a_new_thread(app):
+    """Streamlit runs every rerun on a fresh thread, and MLX's default streams
+    are per-thread. A model whose lazily loaded weights were never evaluated
+    works only on the thread that built it: in the app, every Run after the
+    first failed with "There is no Stream(cpu, 0) in current thread". The
+    mocked suite and the single-threaded tests above cannot see this, so load
+    here and generate on another thread, the way two reruns would.
+    """
+    import threading
+
+    app._get_model()
+    app._get_edit_model()
+    image_list = [Image.open(app._EXAMPLES_DIR / "cat_window.webp")]
+    results = {}
+
+    def generate(name, **kwargs):
+        try:
+            results[name] = app.infer("a cat", seed=5, width=_W, height=_H, **kwargs)
+        except Exception as exc:  # surfaced below with the pipeline's name
+            results[name] = exc
+
+    for name, kwargs in (("txt2img", {}), ("edit", {"image_list": image_list})):
+        worker = threading.Thread(target=generate, args=(name,), kwargs=kwargs)
+        worker.start()
+        worker.join()
+        assert not isinstance(results[name], Exception), f"{name}: {results[name]!r}"
+        _is_real_image(results[name][0], (_W, _H))
+
+
 def _upsample_without_fallback(app, monkeypatch, prompt, image_list=None):
     """Call upsample_prompt and fail if it quietly fell back to ``prompt``.
 

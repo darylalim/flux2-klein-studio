@@ -513,6 +513,7 @@ version = "0.8.0"
 source = { virtual = "." }
 dependencies = [
     { name = "mflux" },
+    { name = "mlx" },
     { name = "mlx-vlm" },
     { name = "pillow" },
     { name = "streamlit" },
@@ -529,6 +530,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "mflux" },
+    { name = "mlx" },
     { name = "mlx-vlm", specifier = ">=0.7.1" },
     { name = "pillow" },
     { name = "streamlit", specifier = ">=1.62" },
