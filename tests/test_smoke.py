@@ -15,6 +15,7 @@ Weights come from the HF cache; the first run downloads them.
 """
 
 import re
+from unittest.mock import Mock
 
 import pytest
 from PIL import Image
@@ -97,18 +98,52 @@ def test_progress_callback_fires_and_is_deregistered(app):
     assert app._get_model().callbacks.in_loop == [], "reporter left registered"
 
 
-def test_prompt_upsampling_returns_usable_text(app):
-    """Qwen3-VL is the third real dependency and equally mocked elsewhere."""
-    enhanced = app.upsample_prompt("a cat")
+def _upsample_without_fallback(app, monkeypatch, prompt, image_list=None):
+    """Call upsample_prompt and fail if it quietly fell back to ``prompt``.
+
+    It returns the caller's prompt on any exception (after an st.warning, a
+    no-op outside a Streamlit runtime), on a length cap-hit and on an empty
+    decode -- so without these checks a broken real stack still yields a
+    non-empty string and passes. A cap-hit failing here is signal too: it
+    means the repetition guard regressed (0/100 measured on mlx-vlm 0.7.2).
+    """
+    warning = Mock()
+    monkeypatch.setattr(app.st, "warning", warning)
+    enhanced = app.upsample_prompt(prompt, image_list=image_list)
+    warning.assert_not_called()
     assert isinstance(enhanced, str)
     assert enhanced.strip()
-    # <|im_end|> is a stop id consumed before detokenization, so asserting on
-    # it can never fail. The tokens that *can* leak are Qwen3-VL's grounding
-    # markers (<|box_start|>, <|object_ref_start|>, ...), which mlx-vlm's skip
-    # set misses -- hence upsample_prompt decoding token_ids itself. This only
-    # fires if the model happens to emit one; the contract test below doesn't
-    # depend on that.
+    assert enhanced != prompt, "upsample_prompt fell back to the original"
+    return enhanced
+
+
+def test_prompt_upsampling_returns_usable_text(app, monkeypatch):
+    """Qwen3-VL is the third real dependency and equally mocked elsewhere."""
+    enhanced = _upsample_without_fallback(app, monkeypatch, "a cat")
+    # token_ids ends with <|im_end|> on a natural stop, and Qwen3-VL's
+    # grounding markers (<|box_start|>, <|object_ref_start|>, ...) are missed
+    # by mlx-vlm's own skip set -- hence upsample_prompt decoding token_ids
+    # with the tokenizer's full skip. The markers only appear if the model
+    # happens to emit one; the contract tests below don't depend on that.
     assert not re.search(r"<\|[a-z_]+\|>", enhanced), enhanced
+
+
+def test_generate_token_ids_hold_only_the_completion(app):
+    """upsample_prompt decodes ``result.token_ids``, so it rests on that list
+    being the completion alone. Prompt ids in it would hand the whole chat
+    transcript, system prompt included, to FLUX; ``None`` would make every
+    enhancement fall back. The mocked suite builds token_ids itself and
+    cannot see either.
+    """
+    model, processor, config = app._get_vlm()
+    prompt = app.apply_chat_template(
+        processor, config, [{"role": "user", "content": "a cat"}], num_images=0
+    )
+    result = app.vlm_generate(model, processor, prompt, max_tokens=32)
+    assert result.token_ids is not None
+    assert len(result.token_ids) == result.generation_tokens
+    if result.finish_reason == "stop":
+        assert result.token_ids[-1] in processor.tokenizer.all_special_ids
 
 
 def test_tokenizer_decode_drops_the_grounding_markers(app):
@@ -133,7 +168,7 @@ def test_tokenizer_decode_drops_the_grounding_markers(app):
     assert tok.decode(ids, skip_special_tokens=True) == "A cat"
 
 
-def test_prompt_upsampling_sees_multiple_images(app):
+def test_prompt_upsampling_sees_multiple_images(app, monkeypatch):
     """The multi-image VLM path, unmocked.
 
     Every other VLM test patches ``vlm_generate``, so nothing else proves that
@@ -146,10 +181,8 @@ def test_prompt_upsampling_sees_multiple_images(app):
     images = [Image.open(p) for p in paths]
     sizes = [i.size for i in images]
 
-    enhanced = app.upsample_prompt(request, image_list=images)
+    enhanced = _upsample_without_fallback(app, monkeypatch, request, images)
 
-    assert isinstance(enhanced, str)
-    assert enhanced.strip()
     # Grounding markers must not reach the FLUX prompt.
     assert not re.search(r"<\|[a-z_]+\|>", enhanced), enhanced
     # _vlm_images downscales copies; infer() still needs the originals.

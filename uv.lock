@@ -529,7 +529,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "mflux" },
-    { name = "mlx-vlm", specifier = ">=0.7" },
+    { name = "mlx-vlm", specifier = ">=0.7.1" },
     { name = "pillow" },
     { name = "streamlit", specifier = ">=1.62" },
 ]

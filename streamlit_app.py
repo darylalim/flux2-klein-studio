@@ -48,11 +48,11 @@ MODEL_REPO = "mlx-community/flux2-klein-4b-8bit"
 # The distilled variant converges in 4 steps; this seeds the steps slider.
 DEFAULT_STEPS = 4
 
-# It is also guidance-free, so guidance is pinned rather than exposed. mflux
-# reads it only to decide whether to run classifier-free guidance against a
-# blank negative prompt, which it does above 1.0 -- a second transformer pass
-# per step on a model distilled not to need one. Passed explicitly because
-# mflux's own defaults disagree (generate_image: 1.0, Config: 4.0).
+# It is also guidance-free, so guidance is pinned rather than exposed. Above
+# 1.0 mflux runs classifier-free guidance against a blank negative prompt,
+# using the value as the CFG scale -- a second transformer pass per step, and
+# output pushed off what the model was distilled for. Passed explicitly
+# because mflux's own defaults disagree (generate_image: 1.0, Config: 4.0).
 GUIDANCE = 1.0
 
 EXAMPLE_PROMPTS = [

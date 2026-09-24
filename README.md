@@ -61,7 +61,7 @@ The studio opens with controls on the left and the output on the right.
 
 - **Prompt upsampling** — a vision-language model (Qwen3-VL-2B) rewrites your prompt into a more descriptive one; when editing, it can see your uploaded images. Off by default.
 - **Seed** — *Randomize* is **on** by default, so each Run varies. Turn it off and set a seed for reproducible results.
-- **Width / Height / Number of inference steps** — fine-tune output size and sampling. The distilled model is tuned for 4 steps (the default), but the steps slider stays open if you want to push further. There is no guidance control: the model is guidance-free by design, so guidance stays fixed at 1.0 — higher values would only double the cost of each step.
+- **Width / Height / Number of inference steps** — fine-tune output size and sampling. The distilled model is tuned for 4 steps (the default), but the steps slider stays open if you want to push further. There is no guidance control: the model is guidance-free by design, so guidance stays fixed at 1.0. Higher values would switch on classifier-free guidance, roughly doubling the cost of each step and pulling the output away from what the distilled model was tuned for.
 
 **Examples** — click a prompt example to fill the box, or an editing example to load its prompt together with its bundled input images.
 
