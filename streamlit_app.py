@@ -187,16 +187,19 @@ def upsample_prompt(prompt, image_list: list | None = None):
             # clause-length cycle.
             repetition_penalty=1.05,
             repetition_context_size=64,
-            # Qwen3-VL is grounding-trained and its <|box_start|>-style tokens
-            # are not stop ids, so without this they decode verbatim into the
-            # prompt handed to FLUX.
-            skip_special_tokens=True,
         )
         # mlx-vlm reports "length" when the cap cut generation off rather
         # than the model stopping on its own; that text is a fragment.
         if result.finish_reason == "length":
             return prompt
-        enhanced = result.text.strip()
+        # Decode the ids rather than read result.text. Qwen3-VL is
+        # grounding-trained, and mlx-vlm's skip_special_tokens skips only
+        # tokenizer.all_special_ids -- just <|im_end|> and <|endoftext|> here
+        # -- so <|box_start|>-style markers would reach FLUX verbatim. The
+        # tokenizer's own skip covers all 14 of its special tokens.
+        enhanced = processor.tokenizer.decode(
+            result.token_ids, skip_special_tokens=True
+        ).strip()
         return enhanced or prompt
     except Exception:
         st.warning(

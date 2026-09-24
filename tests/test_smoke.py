@@ -104,9 +104,33 @@ def test_prompt_upsampling_returns_usable_text(app):
     assert enhanced.strip()
     # <|im_end|> is a stop id consumed before detokenization, so asserting on
     # it can never fail. The tokens that *can* leak are Qwen3-VL's grounding
-    # markers (<|box_start|>, <|object_ref_start|>, ...), which are ordinary
-    # special tokens -- hence skip_special_tokens=True in upsample_prompt.
+    # markers (<|box_start|>, <|object_ref_start|>, ...), which mlx-vlm's skip
+    # set misses -- hence upsample_prompt decoding token_ids itself. This only
+    # fires if the model happens to emit one; the contract test below doesn't
+    # depend on that.
     assert not re.search(r"<\|[a-z_]+\|>", enhanced), enhanced
+
+
+def test_tokenizer_decode_drops_the_grounding_markers(app):
+    """The contract upsample_prompt's marker stripping rests on, checked on
+    the real tokenizer: mlx-vlm skips only ``all_special_ids``, which misses
+    the grounding markers, while ``decode(skip_special_tokens=True)`` drops
+    them. If the first half stops holding, the workaround is dead weight; if
+    the second does, markers reach FLUX.
+    """
+    _, processor, _ = app._get_vlm()
+    tok = processor.tokenizer
+    markers = ["<|object_ref_start|>", "<|object_ref_end|>", "<|box_start|>"]
+    marker_ids = tok.convert_tokens_to_ids(markers)
+    assert not set(marker_ids) & set(tok.all_special_ids)
+    ids = (
+        tok.encode("A", add_special_tokens=False)
+        + marker_ids[:1]
+        + tok.encode(" cat", add_special_tokens=False)
+        + marker_ids[1:]
+        + tok.convert_tokens_to_ids(["<|im_end|>"])
+    )
+    assert tok.decode(ids, skip_special_tokens=True) == "A cat"
 
 
 def test_prompt_upsampling_sees_multiple_images(app):

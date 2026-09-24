@@ -7,7 +7,9 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "mflux",
-    "mlx-vlm",
+    # >=0.7 is where GenerationResult gained `token_ids`, which upsample_prompt
+    # decodes itself so Qwen3-VL's grounding markers are stripped.
+    "mlx-vlm>=0.7",
     "pillow",
     # >=1.62 is where st.button gained `wrap`, which the example buttons pass
     # to undo 1.63's one-line truncation of buttons placed directly in columns.

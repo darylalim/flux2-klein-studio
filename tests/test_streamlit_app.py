@@ -32,15 +32,40 @@ def _make_mock_model():
 
 
 class _MockGenerationResult:
-    """Mock mlx-vlm GenerationResult with .text and .finish_reason.
+    """Mock mlx-vlm GenerationResult with .text, .finish_reason and .token_ids.
 
     finish_reason is real: mlx-vlm sets "stop" on a natural end and "length"
     when max_tokens cut generation off, and upsample_prompt branches on it.
+    token_ids holds _FakeTokenizer pieces rather than ints; by default the
+    whole text is one piece, followed on a natural stop by the <|im_end|>
+    id that the real list also ends with.
     """
 
-    def __init__(self, text="enhanced prompt", finish_reason="stop"):
+    def __init__(self, text="enhanced prompt", finish_reason="stop", token_ids=None):
         self.text = text
         self.finish_reason = finish_reason
+        if token_ids is None:
+            token_ids = [text, "<|im_end|>"] if finish_reason == "stop" else [text]
+        self.token_ids = token_ids
+
+
+class _FakeTokenizer:
+    """Stands in for Qwen3-VL's HF tokenizer, where each "id" is a text piece.
+
+    decode(skip_special_tokens=True) drops every added special token, which
+    is the real tokenizer's contract (tests/test_smoke.py checks it against
+    the real one) and the reason upsample_prompt decodes ids itself.
+    """
+
+    SPECIAL = frozenset(
+        {"<|im_end|>", "<|endoftext|>", "<|box_start|>", "<|box_end|>"}
+        | {"<|object_ref_start|>", "<|object_ref_end|>"}
+    )
+
+    def decode(self, token_ids, skip_special_tokens=False):
+        return "".join(
+            t for t in token_ids if not (skip_special_tokens and t in self.SPECIAL)
+        )
 
 
 def _passthrough_cache_resource(func=None, **_kwargs):
@@ -58,6 +83,7 @@ def _passthrough_cache_resource(func=None, **_kwargs):
 def _make_mock_vlm():
     """Create a mock VLM (model, processor, config) triple."""
     mock_processor = MagicMock()
+    mock_processor.tokenizer = _FakeTokenizer()
     mock_model = MagicMock()
     mock_config = MagicMock()
     return mock_model, mock_processor, mock_config
@@ -811,9 +837,38 @@ class TestUpsamplePrompt:
             # Explicit: mlx-vlm's default window is 20 tokens, too short for
             # a clause-length loop.
             assert call_kwargs["repetition_context_size"] == 64
-            # Grounding tokens are not stop ids and would decode into the
-            # prompt handed to FLUX.
-            assert call_kwargs["skip_special_tokens"] is True
+
+    def test_grounding_markers_are_stripped(self):
+        """mlx-vlm's skip set is only all_special_ids (<|im_end|>/<|endoftext|>
+        for Qwen3-VL), so result.text keeps grounding markers; upsample_prompt
+        must decode token_ids with the tokenizer's full skip instead."""
+        mock_model = _make_mock_model()
+        mock_vlm = _make_mock_vlm()
+        streamlit_app, _, _ = _reload_app(mock_model, mock_vlm=mock_vlm)
+        pieces = [
+            "A ",
+            "<|object_ref_start|>",
+            "cat",
+            "<|object_ref_end|>",
+            " on a sofa",
+            "<|im_end|>",
+        ]
+        with (
+            patch("streamlit_app.load_vlm") as mock_load,
+            patch("streamlit_app.load_config") as mock_lc,
+            patch("streamlit_app.apply_chat_template") as mock_chat,
+            patch("streamlit_app.vlm_generate") as mock_gen,
+        ):
+            mock_vlm_model, mock_vlm_processor, mock_vlm_config = mock_vlm
+            mock_load.return_value = (mock_vlm_model, mock_vlm_processor)
+            mock_lc.return_value = mock_vlm_config
+            mock_chat.return_value = "formatted prompt"
+            mock_gen.return_value = _MockGenerationResult(
+                # What mlx-vlm's own detokenizer yields for these ids.
+                "A <|object_ref_start|>cat<|object_ref_end|> on a sofa",
+                token_ids=pieces,
+            )
+            assert streamlit_app.upsample_prompt("a cat") == "A cat on a sofa"
 
     def test_extracts_and_strips_output(self):
         mock_model = _make_mock_model()
