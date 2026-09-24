@@ -160,7 +160,9 @@ class TestConstants:
         import streamlit_app
 
         assert streamlit_app.DEFAULT_STEPS == 4
-        assert streamlit_app.DEFAULT_GUIDANCE == 1.0
+        # Above 1.0 mflux runs CFG against a blank negative -- a second
+        # transformer pass per step the distilled model doesn't need.
+        assert streamlit_app.GUIDANCE == 1.0
 
     def test_no_mode_tables_remain(self):
         """The base variant was dropped; no mode plumbing should linger."""
@@ -274,7 +276,6 @@ class TestInfer:
                 seed=123,
                 width=768,
                 height=512,
-                guidance_scale=3.0,
                 num_inference_steps=20,
             )
             mock_model.generate_image.assert_called_once_with(
@@ -283,7 +284,7 @@ class TestInfer:
                 num_inference_steps=20,
                 width=768,
                 height=512,
-                guidance=3.0,
+                guidance=streamlit_app.GUIDANCE,
             )
 
     def test_fixed_seed(self):
@@ -340,28 +341,10 @@ class TestInfer:
                 num_inference_steps=streamlit_app.DEFAULT_STEPS,
                 width=1024,
                 height=1024,
-                guidance=streamlit_app.DEFAULT_GUIDANCE,
+                guidance=streamlit_app.GUIDANCE,
             )
 
-    def test_explicit_params_override_defaults(self):
-        mock_model = _make_mock_model()
-        streamlit_app, _, _ = _reload_app(mock_model)
-        with patch("streamlit_app.Flux2Klein", return_value=mock_model):
-            streamlit_app.infer(
-                "a cat",
-                guidance_scale=2.0,
-                num_inference_steps=10,
-            )
-            mock_model.generate_image.assert_called_once_with(
-                seed=42,
-                prompt="a cat",
-                num_inference_steps=10,
-                width=1024,
-                height=1024,
-                guidance=2.0,
-            )
-
-    def test_partial_override_steps_only(self):
+    def test_explicit_steps_override_default(self):
         mock_model = _make_mock_model()
         streamlit_app, _, _ = _reload_app(mock_model)
         with patch("streamlit_app.Flux2Klein", return_value=mock_model):
@@ -371,7 +354,7 @@ class TestInfer:
             )
             call_kwargs = mock_model.generate_image.call_args[1]
             assert call_kwargs["num_inference_steps"] == 10
-            assert call_kwargs["guidance"] == streamlit_app.DEFAULT_GUIDANCE
+            assert call_kwargs["guidance"] == streamlit_app.GUIDANCE
 
     def test_infer_takes_no_mode_argument(self):
         """The mode parameter is gone; a stale caller must fail loudly."""
@@ -380,6 +363,17 @@ class TestInfer:
         import streamlit_app
 
         assert "mode" not in inspect.signature(streamlit_app.infer).parameters
+
+    def test_infer_takes_no_guidance_argument(self):
+        """Guidance is pinned, not a parameter; a stale caller must fail loudly
+        rather than have its value silently ignored."""
+        import inspect
+
+        import streamlit_app
+
+        params = inspect.signature(streamlit_app.infer).parameters
+        assert "guidance_scale" not in params
+        assert "guidance" not in params
 
     def test_image_list_uses_edit_model(self):
         mock_model = _make_mock_model()
@@ -393,6 +387,8 @@ class TestInfer:
             streamlit_app.infer("edit this", image_list=images)
             call_kwargs = mock_edit_model.generate_image.call_args[1]
             assert call_kwargs["image_paths"] is images
+            # The edit pipeline runs the same CFG-above-1.0 branch.
+            assert call_kwargs["guidance"] == streamlit_app.GUIDANCE
             mock_model.generate_image.assert_not_called()
 
     def test_no_images_uses_txt2img_model(self):
@@ -1242,18 +1238,14 @@ class TestStreamlitApp:
             assert at.text_input(key="prompt_input").placeholder == "Enter your prompt"
 
     def test_sliders_seed_the_distilled_defaults(self):
-        # Nothing writes these keys any more (the mode block used to), so the
-        # setdefault seeding is the only thing standing between the sliders and
-        # their min_value — 1 step at guidance 0.0 would render noise.
+        # Nothing writes this key any more (the mode block used to), so the
+        # setdefault seeding is the only thing standing between the slider and
+        # its min_value — 1 step would render noise.
         import streamlit_app
 
         with _app_test() as app:
             at = app.run(timeout=10)
             assert at.slider(key="steps_slider").value == streamlit_app.DEFAULT_STEPS
-            assert (
-                at.slider(key="guidance_scale_slider").value
-                == streamlit_app.DEFAULT_GUIDANCE
-            )
 
     def test_steps_slider_still_allows_long_runs(self):
         # Losing the Base preset must not lose the ability to run many steps.
@@ -1273,17 +1265,12 @@ class TestStreamlitApp:
             )
 
     def test_advanced_sliders_render_while_collapsed(self):
-        # The Advanced settings expander is collapsed by default, yet its four
+        # The Advanced settings expander is collapsed by default, yet its three
         # sliders must still instantiate every run: their values feed infer(),
         # so gating the expander body on it being open would leave them unset.
         with _app_test() as app:
             at = app.run(timeout=10)
-            for key in (
-                "width_slider",
-                "height_slider",
-                "steps_slider",
-                "guidance_scale_slider",
-            ):
+            for key in ("width_slider", "height_slider", "steps_slider"):
                 assert at.slider(key=key).value is not None
 
     def test_example_buttons_render(self):
@@ -1484,10 +1471,16 @@ class TestUIWidgets:
                 assert slider.max == 1024
                 assert slider.step == 32
 
-    def test_guidance_slider_uses_g_format(self):
+    def test_no_guidance_slider_rendered(self):
+        # Guidance is pinned (see GUIDANCE). Assert the exact slider set rather
+        # than the absence of one label, so the check can't pass vacuously.
         with _app_test() as app:
             at = app.run(timeout=10)
-            assert at.slider(key="guidance_scale_slider").proto.format == "%g"
+            assert {s.label for s in at.slider} == {
+                "Width",
+                "Height",
+                "Number of inference steps",
+            }
 
     def test_seed_is_number_input(self):
         with _app_test() as app:

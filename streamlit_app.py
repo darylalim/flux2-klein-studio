@@ -45,10 +45,15 @@ VLM_MAX_TOKENS = 256
 # mode switch.
 MODEL_REPO = "mlx-community/flux2-klein-4b-8bit"
 
-# The distilled variant is guidance-free and converges in 4 steps. These seed the
-# steps/guidance sliders, which stay adjustable.
+# The distilled variant converges in 4 steps; this seeds the steps slider.
 DEFAULT_STEPS = 4
-DEFAULT_GUIDANCE = 1.0
+
+# It is also guidance-free, so guidance is pinned rather than exposed. mflux
+# reads it only to decide whether to run classifier-free guidance against a
+# blank negative prompt, which it does above 1.0 -- a second transformer pass
+# per step on a model distilled not to need one. Passed explicitly because
+# mflux's own defaults disagree (generate_image: 1.0, Config: 4.0).
+GUIDANCE = 1.0
 
 EXAMPLE_PROMPTS = [
     "Create a vase on a table in living room, the color of the vase is a gradient of color, starting with #02eb3c color and finishing with #edfa3c. The flowers inside the vase have the color #ff0088",
@@ -280,13 +285,10 @@ def infer(
     randomize_seed=False,
     width=1024,
     height=1024,
-    guidance_scale=None,
     num_inference_steps=None,
     image_list=None,
     progress_callback=None,
 ):
-    if guidance_scale is None:
-        guidance_scale = DEFAULT_GUIDANCE
     if num_inference_steps is None:
         num_inference_steps = DEFAULT_STEPS
 
@@ -308,7 +310,7 @@ def infer(
                 num_inference_steps=num_inference_steps,
                 width=width,
                 height=height,
-                guidance=guidance_scale,
+                guidance=GUIDANCE,
                 image_paths=image_list,
             )
         else:
@@ -318,7 +320,7 @@ def infer(
                 num_inference_steps=num_inference_steps,
                 width=width,
                 height=height,
-                guidance=guidance_scale,
+                guidance=GUIDANCE,
             )
     finally:
         if reporter is not None:
@@ -456,13 +458,12 @@ if __name__ == "__main__":
         st.session_state.setdefault("width_slider", 1024)
         st.session_state.setdefault("height_slider", 1024)
         st.session_state.setdefault("steps_slider", DEFAULT_STEPS)
-        st.session_state.setdefault("guidance_scale_slider", DEFAULT_GUIDANCE)
 
-        # The four sliders below are instantiated on every run — two invariants
+        # The three sliders below are instantiated on every run — two invariants
         # to preserve:
-        #  1. Keys seeded above (width/height on image change, plus the
-        #     steps/guidance defaults) are written before this line, so they land
-        #     before the widgets exist. Keep those blocks above this expander.
+        #  1. Keys seeded above (width/height on image change, plus the steps
+        #     default) are written before this line, so they land before the
+        #     widgets exist. Keep those blocks above this expander.
         #  2. Do NOT gate this body with on_change="rerun" + `.open` to skip it
         #     when collapsed: the slider return values feed infer() below, so they
         #     must be assigned every run — a collapsed, un-run body leaves them
@@ -503,24 +504,13 @@ if __name__ == "__main__":
                     key="height_slider",
                 )
 
-            col_steps, col_guidance = st.columns(2)
-            with col_steps:
-                num_inference_steps = st.slider(
-                    "Number of inference steps",
-                    min_value=1,
-                    max_value=100,
-                    step=1,
-                    key="steps_slider",
-                )
-            with col_guidance:
-                guidance_scale = st.slider(
-                    "Guidance scale",
-                    min_value=0.0,
-                    max_value=10.0,
-                    step=0.1,
-                    format="%g",
-                    key="guidance_scale_slider",
-                )
+            num_inference_steps = st.slider(
+                "Number of inference steps",
+                min_value=1,
+                max_value=100,
+                step=1,
+                key="steps_slider",
+            )
 
         st.markdown("**Examples**")
         _ex_cols = st.columns(2)
@@ -610,7 +600,6 @@ if __name__ == "__main__":
                         randomize_seed,
                         width,
                         height,
-                        guidance_scale,
                         num_inference_steps,
                         image_list=image_list,
                         progress_callback=_update_progress,

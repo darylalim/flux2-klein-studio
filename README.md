@@ -23,7 +23,7 @@ Streamlit application for generating and editing images using Black Forest Labs 
 - Optional vision-aware prompt upsampling via Qwen3-VL-2B-Instruct — a toggle in Advanced settings; the VLM can see uploaded images when enhancing edit prompts (loaded on first use)
 - Clickable examples — text-to-image prompts plus an editing example with bundled input images (loading one replaces any manual upload)
 - Per-step progress bar shown inside the output frame during inference, with labeled spinners for first-time model loads and prompt enhancement
-- Configurable seed, dimensions, guidance scale, and inference steps in Advanced settings
+- Configurable seed, dimensions, and inference steps in Advanced settings
 - Streamlit's default light and dark themes — no custom theme or CSS, so the in-app appearance switcher picks the mode
 - Graceful failure handling — empty runs are blocked; unreadable uploads and generation errors surface inline instead of crashing the app
 
@@ -61,7 +61,7 @@ The studio opens with controls on the left and the output on the right.
 
 - **Prompt upsampling** — a vision-language model (Qwen3-VL-2B) rewrites your prompt into a more descriptive one; when editing, it can see your uploaded images. Off by default.
 - **Seed** — *Randomize* is **on** by default, so each Run varies. Turn it off and set a seed for reproducible results.
-- **Width / Height / Number of inference steps / Guidance scale** — fine-tune output size and sampling. The distilled model is tuned for 4 steps at guidance 1.0 (the defaults) and is guidance-free by design, but both sliders stay open if you want to push further.
+- **Width / Height / Number of inference steps** — fine-tune output size and sampling. The distilled model is tuned for 4 steps (the default), but the steps slider stays open if you want to push further. There is no guidance control: the model is guidance-free by design, so guidance stays fixed at 1.0 — higher values would only double the cost of each step.
 
 **Examples** — click a prompt example to fill the box, or an editing example to load its prompt together with its bundled input images.
 
