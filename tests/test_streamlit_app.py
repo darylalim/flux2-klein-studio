@@ -1,6 +1,7 @@
 import contextlib
 import importlib
 import io
+import math
 import tomllib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -630,6 +631,133 @@ class TestDimensionsFromImages:
         w, h = streamlit_app._dimensions_from_images(images)
         assert w == 256
         assert h == 1024
+
+
+class TestCanvasGeometry:
+    """st.image has no height parameter and Streamlit exposes no viewport size,
+    so the canvas bounds a picture's drawn height through its width, twice: a
+    column share (CANVAS_HEIGHT_RATIO x the main-area width) and a pixel cap
+    (CANVAS_MAX_HEIGHT)."""
+
+    # Streamlit 1.64 layout, measured at dpr 1 with the shoot recipe in
+    # CLAUDE.md: the canvas starts 152px down (header, top padding, prompt bar,
+    # gap), the seed caption needs 30px under the picture (8px gap + 22px
+    # line), and the main area is padded 80px each side.
+    _CANVAS_TOP, _CAPTION, _MAIN_PAD = 152, 30, 160
+
+    # (viewport width, height, sidebar open): browser windows on Mac displays
+    # the picture and its seed caption must fit without scrolling. The known
+    # misses -- a collapsed sidebar in any window under 842px tall, e.g.
+    # 1280x720 and 1440x790 -- are left out on purpose; CLAUDE.md records them.
+    _FOLD_VIEWPORTS = [
+        (1280, 720, True),
+        (1440, 790, True),
+        (1440, 880, True),
+        (1512, 860, True),
+        (1728, 1000, True),
+        (1920, 968, True),
+        (2560, 1330, True),
+        (1440, 880, False),
+        (1512, 860, False),
+        (1920, 968, False),
+        (1920, 1080, False),
+    ]
+
+    def test_column_share_bounds_height_by_the_ratio(self):
+        import streamlit_app
+
+        ratio = streamlit_app.CANVAS_HEIGHT_RATIO
+        for w, h in [(1024, 1024), (672, 1024), (256, 1024), (1024, 768)]:
+            spec = streamlit_app._canvas_spec(w, h)
+            assert spec is not None
+            left, share, right = spec
+            assert left == right
+            assert abs(left + share + right - 1) < 1e-9
+            assert abs(share / (w / h) - ratio) < 1e-9
+
+    def test_wide_landscapes_span_the_canvas(self):
+        import streamlit_app
+
+        ratio = streamlit_app.CANVAS_HEIGHT_RATIO
+        assert streamlit_app._canvas_spec(1024, 256) is None
+        # Just past the break-even aspect of 1 / ratio.
+        assert streamlit_app._canvas_spec(1000, int(1000 * ratio) - 1) is None
+
+    def test_display_width_caps_the_drawn_height(self):
+        import streamlit_app
+
+        cap = streamlit_app.CANVAS_MAX_HEIGHT
+        for w, h in [(1024, 1024), (672, 1024), (1024, 576), (256, 1024)]:
+            drawn = streamlit_app._canvas_display_width(w, h)
+            # Within the rounding of the width to a whole pixel.
+            assert abs(drawn * h / w - cap) <= h / w
+
+    def test_degenerate_sizes_fall_back(self):
+        import streamlit_app
+
+        assert streamlit_app._canvas_spec(0, 1024) is None
+        assert streamlit_app._canvas_spec(1024, 0) is None
+        cap = streamlit_app.CANVAS_MAX_HEIGHT
+        assert streamlit_app._canvas_display_width(0, 0) == cap
+
+    def test_blank_canvas_keeps_the_output_aspect(self):
+        import streamlit_app
+
+        for w, h in [(1024, 1024), (672, 1024), (1024, 576), (256, 1024)]:
+            canvas = streamlit_app._blank_canvas(w, h)
+            assert canvas.width * h == canvas.height * w
+            # Translucent, so it reads on both stock themes.
+            assert canvas.mode == "RGBA"
+            assert canvas.getpixel((0, 0))[3] < 255
+
+    def _caption_bottom(self, app, vw, sidebar_open, size, display_width):
+        """Where the seed caption ends, modelled with the measured offsets."""
+        w, h = size
+        main_w = vw - self._MAIN_PAD - (app.SIDEBAR_WIDTH if sidebar_open else 0)
+        spec = app._canvas_spec(w, h)
+        column = main_w * (spec[1] if spec else 1)
+        drawn_w = min(column, display_width(w, h))
+        return self._CANVAS_TOP + drawn_w * h / w + self._CAPTION
+
+    def test_picture_and_caption_fit_the_measured_viewports(self):
+        import streamlit_app as app
+
+        assert 200 <= app.SIDEBAR_WIDTH <= 600  # set_page_config's int range
+        for vw, vh, sidebar_open in self._FOLD_VIEWPORTS:
+            for size in [(1024, 1024), (672, 1024), (1024, 576)]:
+                bottom = self._caption_bottom(
+                    app, vw, sidebar_open, size, app._canvas_display_width
+                )
+                assert bottom <= vh, (vw, vh, sidebar_open, size, bottom)
+
+    def test_the_pixel_cap_is_load_bearing(self):
+        # Non-vacuity: the README-hero size with the sidebar collapsed is in
+        # the fold list, and a square fits there only because of the cap --
+        # without it the caption lands off screen, the regression the cap
+        # exists to stop.
+        import streamlit_app as app
+
+        assert (1440, 880, False) in self._FOLD_VIEWPORTS
+        square = (1024, 1024)
+        capped = self._caption_bottom(
+            app, 1440, False, square, app._canvas_display_width
+        )
+        uncapped = self._caption_bottom(app, 1440, False, square, lambda *_: math.inf)
+        assert capped <= 880 < uncapped
+
+    def test_layout_constants_are_the_measured_ones(self):
+        # The fold model above only catches a retune that grows the picture;
+        # a smaller canvas or a sidebar-width change (which re-wraps the
+        # example labels -- AppTest cannot see layout) passes it. Pin the
+        # measured trio so a retune has to come through here and re-measure
+        # with the shoot recipe in CLAUDE.md.
+        import streamlit_app as app
+
+        assert (app.SIDEBAR_WIDTH, app.CANVAS_HEIGHT_RATIO, app.CANVAS_MAX_HEIGHT) == (
+            320,
+            0.6,
+            660,
+        )
 
 
 class TestVLMInit:
@@ -1352,6 +1480,36 @@ def _patched_models(txt2img, edit, *, vlm_text=None):
         yield AppTest.from_file(_APP_PATH), vlm_generate
 
 
+def _find_canvas(at):
+    """(centering block, frame): the fixed-width block the canvas picture is
+    drawn into (see _canvas), and the block that centers it."""
+    stack = [(None, at.main)]
+    while stack:
+        parent, node = stack.pop()
+        children = list(getattr(node, "children", {}).values())
+        if any(getattr(child, "type", None) == "image" for child in children):
+            return parent, node
+        stack.extend((node, child) for child in children)
+    raise AssertionError("no canvas picture in the main area")
+
+
+def _canvas_frame(at):
+    """The fixed-width block the canvas picture is drawn into (see _canvas)."""
+    return _find_canvas(at)[1]
+
+
+def _main_position(at, element_type):
+    """Index of the top-level main-area slot whose subtree holds that type."""
+    for index, child in sorted(at.main.children.items()):
+        stack = [child]
+        while stack:
+            node = stack.pop()
+            if getattr(node, "type", None) == element_type:
+                return index
+            stack.extend(getattr(node, "children", {}).values())
+    raise AssertionError(f"no {element_type} in the main area")
+
+
 @contextlib.contextmanager
 def _app_test():
     """Yield an AppTest factory with one shared mock model for both pipelines."""
@@ -1517,9 +1675,11 @@ class TestUIWidgets:
 
     def test_example_buttons_wrap_their_labels(self):
         """Since Streamlit 1.63 an unset ``wrap`` on a button placed directly in
-        a column resolves to one ellipsized line, cutting every example label
-        to ~30 chars. AppTest cannot see layout, so assert the explicit opt-in
-        on the proto -- ``wrap`` has field presence, so unset is detectable.
+        a column or a horizontal container resolves to one ellipsized line.
+        The examples now stack in the sidebar, where they would wrap anyway;
+        the explicit opt-in keeps them wrapping wherever they move next.
+        AppTest cannot see layout, so assert it on the proto -- ``wrap`` has
+        field presence, so unset is detectable.
         """
         import streamlit_app
 
@@ -1633,6 +1793,8 @@ class TestUIWidgets:
             assert "🖼" not in placeholder.value
 
     def test_successful_run_stores_and_renders_result(self):
+        import streamlit_app
+
         with _app_test() as app:
             at = app.run(timeout=10)
             # The placeholder shows before any run.
@@ -1650,6 +1812,20 @@ class TestUIWidgets:
             # The result frame renders the image's seed caption, not the placeholder.
             assert any("Seed: 123" in c.value for c in at.caption)
             assert not any("appear here" in m.value for m in at.markdown)
+            # Drawn under the pixel cap, not merely stretched to the column,
+            # centered, with the seed caption inside the frame so it lines up
+            # with the picture's edge.
+            result = at.session_state["result_image"]
+            center, frame = _find_canvas(at)
+            assert frame.proto.width_config.pixel_width == (
+                streamlit_app._canvas_display_width(*result.size)
+            )
+            flex = center.proto.flex_container
+            assert flex.align == flex.ALIGN_CENTER
+            assert any(
+                "Seed: 123" in str(getattr(child, "value", ""))
+                for child in frame.children.values()
+            )
 
     def test_upsampling_run_uses_enhanced_prompt_and_caches(self):
         mock_model = _make_mock_model()
@@ -1714,7 +1890,7 @@ class TestUIWidgets:
                 "Could not load the example images" in w.value for w in at.warning
             )
             assert "example_images" not in at.session_state
-            # The rest of the controls column still renders.
+            # The rest of the sidebar still renders.
             assert at.button(key="edit_example_0").label
 
     def test_corrupt_upload_warns(self):
@@ -1762,3 +1938,175 @@ class TestUIWidgets:
             at.button(key="example_2").click().run(timeout=10)
             assert "auto_enhanced_prompt" not in at.session_state
             assert not any("Enhanced prompt" in i.value for i in at.info)
+
+    def test_prompt_and_canvas_in_main_controls_in_sidebar(self):
+        # The prompt stays in main: "auto" collapses the sidebar on narrow
+        # viewports, and the primary action must not hide behind it.
+        import streamlit_app
+
+        keys = [f"example_{i}" for i in range(len(streamlit_app.EXAMPLE_PROMPTS))]
+        keys += [f"edit_example_{i}" for i in range(len(streamlit_app.EDIT_EXAMPLES))]
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            main, sidebar = at.main, at.sidebar
+            assert [t.key for t in main.text_input] == ["prompt_input"]
+            assert [b.label for b in main.button] == ["Run"]
+            assert len(sidebar.text_input) == 0
+            assert [t.value for t in sidebar.title] == [streamlit_app.APP_TITLE]
+            assert {s.key for s in sidebar.slider} == {
+                "width_slider",
+                "height_slider",
+                "steps_slider",
+            }
+            assert {t.label for t in sidebar.toggle} == {
+                "Prompt upsampling",
+                "Randomize seed",
+            }
+            assert [n.label for n in sidebar.number_input] == ["Seed"]
+            assert len(sidebar.get("file_uploader")) == 1
+            assert set(keys) <= {b.key for b in sidebar.button}
+
+    def test_run_notices_render_in_main(self):
+        # Notices must survive a collapsed sidebar, and must stay out of
+        # result_slot, which the bottom block overwrites on every run.
+        mock_model = _make_mock_model()
+        mock_model.generate_image.side_effect = RuntimeError("backend exploded")
+        with _patched_models(mock_model, mock_model) as (app, _generate):
+            at = app.run(timeout=10)
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            assert any("Enter a prompt" in w.value for w in at.main.warning)
+            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            assert any("failed" in e.value.lower() for e in at.main.error)
+            assert len(at.sidebar.error) == 0
+            # Between the prompt bar and the canvas, not under the picture.
+            assert _main_position(at, "error") < _main_position(at, "image")
+
+    def test_enhancement_failure_notice_renders_in_main(self):
+        # upsample_prompt warns and falls back when the VLM fails; that
+        # warning must land in notices, not in the status inside result_slot,
+        # which the bottom block overwrites -- a failed enhancement would then
+        # leave no trace once the image renders.
+        mock_model = _make_mock_model()
+        with _patched_models(mock_model, mock_model) as (app, vlm_generate):
+            vlm_generate.side_effect = RuntimeError("vlm down")
+            at = app.run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            assert not at.exception
+            assert any("Prompt enhancement failed" in w.value for w in at.main.warning)
+            assert len(at.sidebar.warning) == 0
+            assert _main_position(at, "warning") < _main_position(at, "image")
+
+    def test_failed_enhanced_run_drops_the_banner(self):
+        # The enhanced-prompt banner sits under the image it produced. A failed
+        # enhanced run must not hang its new prompt under the previous image.
+        mock_model = _make_mock_model()
+        with _patched_models(mock_model, mock_model, vlm_text="ENHANCED a cat") as (
+            app,
+            _generate,
+        ):
+            at = app.run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            assert any("ENHANCED a cat" in i.value for i in at.main.info)
+            mock_model.generate_image.side_effect = RuntimeError("backend exploded")
+            at.text_input(key="prompt_input").set_value("a dog").run(timeout=10)
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            at.run(timeout=10)
+            assert not any("Enhanced prompt" in i.value for i in at.main.info)
+            assert any("Seed:" in c.value for c in at.main.caption)
+
+    def test_mid_run_status_sits_under_the_blank_canvas(self):
+        # Freeze a Run two steps in (st.stop() leaves the tree as drawn): the
+        # swatch holds the canvas geometry, the one status sits under it, and
+        # the label carries the step count next to the progress bar.
+        from types import SimpleNamespace
+
+        import streamlit as st
+
+        import streamlit_app
+
+        mock_model = _make_mock_model()
+
+        def _two_steps_then_freeze(**kwargs):
+            config = SimpleNamespace(num_inference_steps=kwargs["num_inference_steps"])
+            for t in range(2):
+                for reporter in list(mock_model.callbacks.in_loop):
+                    reporter.call_in_loop(
+                        t=t,
+                        seed=0,
+                        prompt="",
+                        latents=None,
+                        config=config,
+                        time_steps=None,
+                    )
+            st.stop()
+
+        mock_model.generate_image.side_effect = _two_steps_then_freeze
+        with _patched_models(mock_model, mock_model) as (app, _generate):
+            at = app.run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            assert not at.exception
+            frame = _canvas_frame(at)
+            assert frame.proto.width_config.pixel_width == (
+                streamlit_app._canvas_display_width(1024, 1024)
+            )
+            children = list(frame.children.values())
+            assert [c.type for c in children[:2]] == ["image", "status"]
+            status = children[1]
+            assert status.label == "Generating image… step 2/4"
+            assert status.proto.expanded
+            progress = next(iter(status.children.values()))
+            assert progress.type == "progress"
+            assert progress.value == 50
+
+    def test_result_frame_follows_the_result_size(self):
+        # The result frame is sized from the image itself, not the sliders: a
+        # portrait result under the default square sliders draws portrait.
+        import streamlit_app
+
+        mock_model = _make_mock_model()
+        mock_model.generate_image.return_value = _MockGeneratedImage(
+            Image.new("RGB", (672, 1024))
+        )
+        with _patched_models(mock_model, mock_model) as (app, _generate):
+            at = app.run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            assert not at.exception
+            assert _canvas_frame(at).proto.width_config.pixel_width == (
+                streamlit_app._canvas_display_width(672, 1024)
+            )
+
+    def test_enhanced_prompt_renders_in_main(self):
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            at.session_state["auto_enhanced_prompt"] = "an enhanced prompt"
+            at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
+            assert any("Enhanced prompt" in i.value for i in at.main.info)
+            assert len(at.sidebar.info) == 0
+
+    def test_idle_canvas_previews_the_requested_size(self):
+        import streamlit_app
+
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            placeholder = next(m for m in at.main.markdown if "appear here" in m.value)
+            # Non-breaking spaces keep "W × H" whole on a narrow canvas.
+            assert "1024 × 1024" in placeholder.value
+            assert _canvas_frame(at).proto.width_config.pixel_width == (
+                streamlit_app._canvas_display_width(1024, 1024)
+            )
+            # The portrait editing example resizes the output; the blank
+            # canvas follows it and says what is being edited.
+            at.button(key="edit_example_0").click().run(timeout=10)
+            placeholder = next(m for m in at.main.markdown if "appear here" in m.value)
+            assert "672 × 1024" in placeholder.value
+            assert "Editing 3 input images" in placeholder.value
+            assert _canvas_frame(at).proto.width_config.pixel_width == (
+                streamlit_app._canvas_display_width(672, 1024)
+            )
