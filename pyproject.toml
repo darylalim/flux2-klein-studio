@@ -47,6 +47,10 @@ dev = [
     # local/CI divergence the hook exists to close.
     "ruff>=0.16",
     "ty",
+    # Streamlit's file watcher, so edits rerun the app without polling.
+    # Streamlit declares it only for platform_system != "Darwin", so on this
+    # app's one target platform it never arrives transitively.
+    "watchdog>=6.0.0",
 ]
 
 [tool.pytest.ini_options]
