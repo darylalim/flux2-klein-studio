@@ -21,7 +21,7 @@
 #     would ever validate what it did. Below the gate its output is checked by
 #     the two gates that follow it.
 #   * ty and pytest run only when an edit armed the marker, because together
-#     they cost ~14s and most turns should not pay it.
+#     they cost ~17s and most turns should not pay it.
 #
 # Lint-fix runs BEFORE format, and the order is load-bearing: `ruff check --fix`
 # removing an unused import leaves behind the blank line that followed it, so

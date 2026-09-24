@@ -181,8 +181,10 @@ def upsample_prompt(prompt, image_list: list | None = None):
             top_p=0.8,
             top_k=20,
             # 1.05 cleared the multi-image repetition loop in every measured
-            # case. The window is explicit because mlx-vlm defaults it to 20
-            # tokens, too short to see a clause-length cycle.
+            # case, re-measured on mlx-vlm 0.7, whose always-chunked prefill
+            # leaves the prompt out of the window. The window is explicit
+            # because mlx-vlm defaults it to 20 tokens, too short to see a
+            # clause-length cycle.
             repetition_penalty=1.05,
             repetition_context_size=64,
             # Qwen3-VL is grounding-trained and its <|box_start|>-style tokens
@@ -524,6 +526,10 @@ if __name__ == "__main__":
                     args=(_example,),
                     width="stretch",
                     help=_example,
+                    # Since Streamlit 1.63 a button placed directly in a column
+                    # defaults to one ellipsized line (~30 chars here), which
+                    # would hide most of what _truncate leaves visible.
+                    wrap=True,
                 )
 
         st.markdown("**Editing examples**")
@@ -537,6 +543,7 @@ if __name__ == "__main__":
                     args=(_ex_prompt, _ex_imgs),
                     width="stretch",
                     help=_ex_prompt,
+                    wrap=True,
                 )
             with _col_imgs:
                 st.image(_ex_imgs, width=56)

@@ -5,8 +5,9 @@
 # Any [theme] key added back here makes this a *custom* theme, and a custom
 # theme with neither [theme.light] nor [theme.dark] populated collapses to one
 # "Custom Theme" -- the light/dark switcher disappears entirely. (Streamlit
-# 1.61.1 frontend, `Lu` in static/js/utils.*.js: the variant branch tests
-# `light || dark`, so *one* populated variant is enough to keep the switcher;
-# a lone `font` up here populates neither and costs it.) If a custom theme is
+# 1.64.0 frontend, `xn` in static/js/utils.*.js -- a minified name that moves
+# every release, `Lu` in 1.61.1: the variant branch tests `light || dark`, so
+# *one* populated variant is enough to keep the switcher; a lone `font` up
+# here populates neither and costs it.) If a custom theme is
 # ever wanted again, set colors here rather than via CSS, define both variants
 # so neither mode inherits the other's palette, and update TestThemeConfig.
