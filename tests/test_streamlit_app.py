@@ -1452,6 +1452,22 @@ class TestUIWidgets:
             assert "**Editing examples**" in headers
             assert at.button(key="edit_example_0").label
 
+    def test_example_buttons_wrap_their_labels(self):
+        """Since Streamlit 1.63 an unset ``wrap`` on a button placed directly in
+        a column resolves to one ellipsized line, cutting every example label
+        to ~30 chars. AppTest cannot see layout, so assert the explicit opt-in
+        on the proto -- ``wrap`` has field presence, so unset is detectable.
+        """
+        import streamlit_app
+
+        keys = [f"example_{i}" for i in range(len(streamlit_app.EXAMPLE_PROMPTS))]
+        keys += [f"edit_example_{i}" for i in range(len(streamlit_app.EDIT_EXAMPLES))]
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            for key in keys:
+                proto = at.button(key=key).proto
+                assert proto.HasField("wrap") and proto.wrap, key
+
     def test_t2i_example_clears_loaded_edit_images(self):
         with _app_test() as app:
             at = app.run(timeout=10)
