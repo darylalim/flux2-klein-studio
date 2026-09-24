@@ -7,6 +7,9 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "mflux",
+    # Also arrives through mflux, but the app imports it directly: the model
+    # getters call mx.eval to materialize the weights on the loading thread.
+    "mlx",
     # >=0.7.1 is where GenerationResult gained `token_ids` (0.7.0 lacks it),
     # which upsample_prompt decodes itself so Qwen3-VL's grounding markers
     # are stripped.

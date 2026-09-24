@@ -257,6 +257,21 @@ class TestModelLoading:
                 == streamlit_app.MODEL_REPO
             )
 
+    def test_getters_materialize_the_weights_before_caching(self):
+        """Streamlit reruns on new threads and MLX streams are per-thread, so
+        lazily loaded weights would work only on the rerun that built them.
+        The getters must evaluate them on the loading thread. This pins the
+        call; test_smoke's cross-thread test proves it on real weights."""
+        txt2img, edit = _make_mock_model(), _make_mock_model()
+        streamlit_app, _, _ = _reload_app(txt2img, mock_edit_model=edit)
+        with patch("streamlit_app.mx.eval") as mock_eval:
+            assert streamlit_app._get_model() is txt2img
+            assert streamlit_app._get_edit_model() is edit
+        assert [c.args for c in mock_eval.call_args_list] == [
+            (txt2img.parameters.return_value,),
+            (edit.parameters.return_value,),
+        ]
+
 
 class TestInfer:
     def test_returns_image_and_seed(self):

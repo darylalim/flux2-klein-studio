@@ -3,6 +3,7 @@ import random
 from pathlib import Path
 from typing import cast
 
+import mlx.core as mx
 import streamlit as st
 from mflux.models.common.config import ModelConfig
 from mflux.models.flux2.variants import Flux2Klein, Flux2KleinEdit
@@ -77,6 +78,19 @@ EDIT_EXAMPLES = [
 ]
 
 
+def _materialized(model):
+    """Evaluate a freshly built mflux model's weights before it is cached.
+
+    Streamlit runs each rerun on a new thread, and MLX's default streams are
+    per-thread. mflux hands back lazily loaded weights bound to the loading
+    thread's stream, so a cached model would work only on the rerun that built
+    it: every later Run fails with "There is no Stream(cpu, 0) in current
+    thread". mlx-vlm's load() already evaluates eagerly, so _get_vlm is fine.
+    """
+    mx.eval(model.parameters())
+    return model
+
+
 # model_path picks the weights; model_config supplies the architecture (its
 # transformer/text-encoder overrides), which mflux does not read from the repo.
 # Passing it is redundant *today* — mflux itself defaults to
@@ -85,13 +99,15 @@ EDIT_EXAMPLES = [
 # load-bearing the moment MODEL_REPO points at anything but a 4b build.
 @st.cache_resource(show_spinner="Loading FLUX.2 Klein (8-bit)…")
 def _get_model():
-    return Flux2Klein(model_path=MODEL_REPO, model_config=ModelConfig.flux2_klein_4b())
+    return _materialized(
+        Flux2Klein(model_path=MODEL_REPO, model_config=ModelConfig.flux2_klein_4b())
+    )
 
 
 @st.cache_resource(show_spinner="Loading FLUX.2 Klein Edit (8-bit)…")
 def _get_edit_model():
-    return Flux2KleinEdit(
-        model_path=MODEL_REPO, model_config=ModelConfig.flux2_klein_4b()
+    return _materialized(
+        Flux2KleinEdit(model_path=MODEL_REPO, model_config=ModelConfig.flux2_klein_4b())
     )
 
 
