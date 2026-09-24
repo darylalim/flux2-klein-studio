@@ -11,6 +11,7 @@ from mlx_vlm import load as load_vlm
 from mlx_vlm.prompt_utils import apply_chat_template
 from mlx_vlm.utils import load_config
 from PIL import Image
+from streamlit.runtime.media_file_storage import MediaFileStorageError
 
 APP_TITLE = "FLUX.2 Klein Studio"
 
@@ -392,8 +393,11 @@ if __name__ == "__main__":
             if not uploaded_files and _has_example_images:
                 st.caption("Loaded example images:")
                 # Unreadable paths would crash this preview before the load guard
-                # below runs; that guard warns and clears them.
-                with contextlib.suppress(OSError):
+                # below runs; that guard warns and clears them. A file that isn't
+                # an image raises UnidentifiedImageError (an OSError); one that
+                # can't be opened at all raises MediaFileStorageError from
+                # Streamlit's media storage, a plain Exception subclass.
+                with contextlib.suppress(OSError, MediaFileStorageError):
                     st.image(st.session_state.example_images, width=80)
                 st.button("Clear example images", on_click=_clear_example_images)
 

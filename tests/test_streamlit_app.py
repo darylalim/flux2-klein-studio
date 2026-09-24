@@ -1692,6 +1692,23 @@ class TestUIWidgets:
             )
             assert "example_images" not in at.session_state
 
+    def test_missing_example_images_warn_and_clear(self):
+        """A missing path fails in the preview's st.image first, raising
+        MediaFileStorageError rather than OSError; uncaught, it aborted the
+        script before the load guard, and re-raised on every rerun because
+        the key was never cleared."""
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            at.session_state["example_images"] = [str(_REPO_ROOT / "missing.webp")]
+            at.run(timeout=10)
+            assert not at.exception
+            assert any(
+                "Could not load the example images" in w.value for w in at.warning
+            )
+            assert "example_images" not in at.session_state
+            # The rest of the controls column still renders.
+            assert at.button(key="edit_example_0").label
+
     def test_corrupt_upload_warns(self):
         with _app_test() as app:
             at = app.run(timeout=10)
