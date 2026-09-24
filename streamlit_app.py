@@ -176,8 +176,10 @@ def upsample_prompt(prompt, image_list: list | None = None):
             processor,
             formatted_prompt,
             # mlx_vlm types `image` as str | list[str] | None; it also accepts
-            # PIL Images at runtime, which ty cannot see here because
-            # image_list is an untyped list.
+            # PIL Images at runtime. ty cannot see the mismatch: _vlm_images
+            # has no return annotation, so its result is Unknown. ty doesn't
+            # check the keyword names below either, so a typo is dropped
+            # silently.
             image=_vlm_images(image_list),
             max_tokens=VLM_MAX_TOKENS,
             # Qwen3-VL's own generation_config.json asks for top_p 0.8 /
