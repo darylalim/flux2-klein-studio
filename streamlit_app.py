@@ -49,8 +49,8 @@ CANVAS_HEIGHT_RATIO = 0.6
 CANVAS_MAX_HEIGHT = 660
 
 # Fill of the blank canvas that stands in for the picture before it exists.
-# Mid-gray at low alpha reads as a faint panel on both stock themes, so no
-# theme color is hard-coded.
+# Mid-gray at low alpha reads as a faint panel on both the stock light theme
+# and the graphite dark one, so no theme color is hard-coded.
 CANVAS_FILL = (128, 128, 128, 28)
 
 VLM_MODEL_ID = "mlx-community/Qwen3-VL-2B-Instruct-8bit"

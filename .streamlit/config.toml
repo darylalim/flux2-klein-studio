@@ -1,13 +1,55 @@
-# No [theme] section on purpose. With no custom theme declared, the app renders
-# Streamlit's stock light and dark themes and the in-app appearance switcher
-# picks between them.
+# A dark-only custom theme; light mode stays Streamlit's stock light theme.
 #
-# Any [theme] key added back here makes this a *custom* theme, and a custom
-# theme with neither [theme.light] nor [theme.dark] populated collapses to one
-# "Custom Theme" -- the light/dark switcher disappears entirely. (Streamlit
-# 1.64.0 frontend, `xn` in static/js/utils.*.js -- a minified name that moves
-# every release, `Lu` in 1.61.1: the variant branch tests `light || dark`, so
-# *one* populated variant is enough to keep the switcher; a lone `font` up
-# here populates neither and costs it.) If a custom theme is
-# ever wanted again, set colors here rather than via CSS, define both variants
-# so neither mode inherits the other's palette, and update TestThemeConfig.
+# Mechanism (Streamlit 1.64.0 frontend, `xn`/`yn` in static/js/utils.*.js --
+# minified names that move every release): once [theme.light] or [theme.dark]
+# is populated the app offers System/Light/Dark, and each mode is built as the
+# top-level [theme] keys plus that mode's own table, merged onto the stock
+# palette of the same base. So every key lives in [theme.dark] or
+# [theme.dark.sidebar]: a top-level [theme] key or a [theme.sidebar] table would
+# leak into light mode, and a custom theme populating neither mode's table
+# collapses to one "Custom Theme" with no switcher (a lone `font` does that).
+#
+# Colors only -- no font, size or radius keys. The canvas fold budget is
+# measured against stock metrics, a mode switch should change nothing but
+# color, and a Google Fonts URL would put a network fetch in a local app.
+#
+# The one light-mode cost no config can avoid: any custom theme sets
+# Streamlit's `secondary` color to primaryColor, so the Run progress bar is
+# stock red #FF4B4B in light mode instead of stock blue #1C83E1 (2.95:1 on its
+# track, against 3.48:1; the status label repeats "step k/n").
+#
+# TestThemeConfig locks this shape and the palette's WCAG AA contrast.
+
+# "Darkroom": an R=G=B graphite surround, so a generated image is judged without
+# a color cast, lit by one ember accent in the warm family of light mode's red.
+[theme.dark]
+# Ember, OKLCH(0.570 0.163 43.5): bright, yet its white Run label clears AA
+# with margin (4.79:1; at this hue and chroma the ceiling is #C75213, 4.52:1;
+# stock #FF4B4B is 3.30:1). On hover/focus Streamlit subtracts 15 points of HSL
+# lightness, to #793006 (2.00:1 on the page) -- the price of an AA white label.
+primaryColor = "#C24E0A"
+# Neutral near-black (L* 5.5): no navy cast around the image (stock #0E1117),
+# and the picture stays the brightest field on the page.
+backgroundColor = "#121212"
+# Prompt field, progress track and, by fallback, the sidebar -- one panel tone.
+secondaryBackgroundColor = "#262626"
+# Stock dark text, pinned: every contrast pair is then read from this file, and
+# left unset, 1.64 logs "Invalid color passed for textColor in theme.sidebar"
+# to the browser console whenever dark mode renders, once [theme.dark.sidebar]
+# exists.
+textColor = "#FAFAFA"
+# Pale ember. The only links sit in an st.caption, drawn at 0.6 opacity, so this
+# renders #A89087 (5.05:1); stock's blue measures 2.77:1 there. Underlined.
+linkColor = "#FFD7C7"
+# Gold warning, 37 degrees of hue clear of the ember; stock's #FFFF12 at 20%
+# composites to olive on a neutral page.
+yellowBackgroundColor = "#E9AB2B29"
+yellowTextColor = "#FFE2A3"
+# The enhanced-prompt banner touches the canvas: a calm slate tint at 14%.
+blueBackgroundColor = "#5B8FD624"
+blueTextColor = "#B4CBE6"
+
+[theme.dark.sidebar]
+# The sidebar draws primary as text (slider values) and has no white-label
+# button, so it takes the same hue and chroma lighter: 4.77:1 on the panel.
+primaryColor = "#E56E36"
